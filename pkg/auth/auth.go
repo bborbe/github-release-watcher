@@ -18,7 +18,7 @@ import (
 	"github.com/bborbe/errors"
 	"github.com/golang/glog"
 
-	"github.com/bborbe/maintainer/lib/githubapp"
+	"github.com/bborbe/maintainer/githubapp"
 )
 
 // Credentials carries the inputs needed for GitHub App auth.

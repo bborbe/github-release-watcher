@@ -16,7 +16,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/bborbe/maintainer/lib/maintainerconfig"
+	"github.com/bborbe/maintainer/maintainerconfig"
 )
 
 var _ = Describe("pkg.Watcher.Poll", func() {

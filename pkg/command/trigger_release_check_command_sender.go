@@ -11,9 +11,8 @@ import (
 	cdb "github.com/bborbe/cqrs/cdb"
 	cqrsiam "github.com/bborbe/cqrs/iam"
 	"github.com/bborbe/errors"
+	lib "github.com/bborbe/maintainer"
 	"github.com/golang/glog"
-
-	"github.com/bborbe/maintainer/lib"
 )
 
 //counterfeiter:generate -o ../../mocks/trigger_release_check_command_sender.go --fake-name TriggerReleaseCheckCommandSender . TriggerReleaseCheckCommandSender

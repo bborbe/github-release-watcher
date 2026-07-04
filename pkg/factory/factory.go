@@ -22,7 +22,7 @@ import (
 	"github.com/bborbe/log"
 	"github.com/bborbe/run"
 
-	lib "github.com/bborbe/maintainer/lib"
+	lib "github.com/bborbe/maintainer"
 )
 
 // CreateKafkaSender constructs a typed create-task command sender backed by a Kafka sync producer.

@@ -33,7 +33,7 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
-	lib "github.com/bborbe/maintainer/lib"
+	lib "github.com/bborbe/maintainer"
 )
 
 func main() {

@@ -15,10 +15,9 @@ import (
 	"github.com/bborbe/github-release-watcher/pkg/factory"
 	libkafkamocks "github.com/bborbe/kafka/mocks"
 	kvmocks "github.com/bborbe/kv/mocks"
+	lib "github.com/bborbe/maintainer"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-
-	"github.com/bborbe/maintainer/lib"
 )
 
 var _ = Describe("clean shutdown of three run.Funcs (spec 067 AC 10)", func() {

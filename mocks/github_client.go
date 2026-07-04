@@ -9,7 +9,7 @@ import (
 	"sync"
 
 	"github.com/bborbe/github-release-watcher/pkg"
-	"github.com/bborbe/maintainer/lib/maintainerconfig"
+	"github.com/bborbe/maintainer/maintainerconfig"
 )
 
 type GitHubClient struct {

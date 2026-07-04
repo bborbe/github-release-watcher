@@ -7,7 +7,7 @@ package filter
 import (
 	"strings"
 
-	repoallowlist "github.com/bborbe/maintainer/lib/repoallowlist"
+	repoallowlist "github.com/bborbe/maintainer/repoallowlist"
 )
 
 // ParseRepoAllowlist parses a comma-separated allowlist string into a slice

@@ -12,7 +12,7 @@ import (
 	"github.com/bborbe/errors"
 	gogithub "github.com/google/go-github/v84/github"
 
-	"github.com/bborbe/maintainer/lib/maintainerconfig"
+	"github.com/bborbe/maintainer/maintainerconfig"
 )
 
 // ErrRateLimited is returned when the GitHub API responds with a rate-limit
