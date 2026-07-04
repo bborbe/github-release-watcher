@@ -1,0 +1,7 @@
+// Copyright (c) 2026 Benjamin Borbe All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// Package command defines the TriggerReleaseCheckCommand payload and its
+// Kafka sender for the github-release watcher's request topic.
+package command
