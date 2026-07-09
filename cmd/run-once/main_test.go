@@ -57,8 +57,9 @@ func fakeProducerFactory(
 var _ = Describe("Run", func() {
 	var (
 		ctx         context.Context
-		watcherMock *mocks.Watcher
-		app         *runonce.Application
+		watcherMock         *mocks.Watcher
+		app                 *runonce.Application
+		capturedTargetVault string
 	)
 
 	BeforeEach(func() {
@@ -86,18 +87,22 @@ var _ = Describe("Run", func() {
 			_ filter.TaskCreationFilter,
 			_ pkg.Metrics,
 			_ string,
+			targetVault string,
 		) pkg.Watcher {
+			capturedTargetVault = targetVault
 			return watcherMock
 		}
 	}
 
-	It("Poll succeeds returns nil", func() {
+	It("Poll succeeds returns nil and propagates TargetVault to the watcher factory", func() {
 		watcherMock.PollReturns(nil)
+		app.TargetVault = "agent"
 		app.CreateWatcher = watcherMockFactory()
 
 		err := app.Run(ctx, nil)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(watcherMock.PollCallCount()).To(Equal(1))
+		Expect(capturedTargetVault).To(Equal("agent"))
 	})
 
 	It("Poll fails returns wrapped error", func() {

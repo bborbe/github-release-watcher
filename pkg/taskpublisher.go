@@ -14,6 +14,11 @@ import (
 // TaskConfig groups per-task envelope settings (stage routing).
 type TaskConfig struct {
 	Stage string // "dev" or "prod" — frontmatter `stage`
+	// TargetVault routes the CreateTaskCommand to a specific vault controller
+	// (matched verbatim against the controller's VAULT_NAME). Empty leaves
+	// TargetVault unset, so the controller's legacy default-vault fallback
+	// applies — preserving pre-TARGET_VAULT behaviour.
+	TargetVault string
 }
 
 //counterfeiter:generate -o ../mocks/task_publisher.go --fake-name TaskPublisher . TaskPublisher

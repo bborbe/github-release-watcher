@@ -1,6 +1,6 @@
 module github.com/bborbe/github-release-watcher
 
-go 1.26.4
+go 1.26.5
 
 require (
 	github.com/IBM/sarama v1.50.3

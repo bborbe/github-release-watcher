@@ -41,8 +41,12 @@ var _ = Describe("pkg.BuildCreateCommand", func() {
 				UnreleasedBullets: 5,
 				AutoRelease:       false,
 			}
-			cmd := pkg.BuildCreateCommand(release, pkg.TaskConfig{Stage: "dev"})
+			cmd := pkg.BuildCreateCommand(
+				release,
+				pkg.TaskConfig{Stage: "dev", TargetVault: "agent"},
+			)
 
+			Expect(cmd.TargetVault).To(Equal("agent"))
 			Expect(cmd.Frontmatter["task_type"]).To(Equal("github-release"))
 			Expect(cmd.Frontmatter["assignee"]).To(Equal("github-releaser-agent"))
 			Expect(cmd.Frontmatter["phase"]).To(Equal("planning"))
@@ -60,6 +64,23 @@ var _ = Describe("pkg.BuildCreateCommand", func() {
 			Expect(cmd.Title).To(Equal("Release bborbe-docker-utils d630ef3"))
 		},
 	)
+
+	It("BuildCreateCommand leaves TargetVault empty when TaskConfig.TargetVault is unset (default path)", func() {
+		release := pkg.Release{
+			Repo: pkg.Repo{
+				Owner:         "bborbe",
+				Name:          "docker-utils",
+				DefaultBranch: "master",
+			},
+			HeadSHA:           "d630ef3526cfc57fbdccd9ba53c5c3a02945e407",
+			CurrentVersion:    "v1.7.7",
+			UnreleasedBullets: 5,
+			AutoRelease:       false,
+		}
+		cmd := pkg.BuildCreateCommand(release, pkg.TaskConfig{Stage: "dev"})
+
+		Expect(cmd.TargetVault).To(BeEmpty())
+	})
 
 	It("BuildCreateCommand body is operator-readable header without bullet content", func() {
 		release := pkg.Release{
