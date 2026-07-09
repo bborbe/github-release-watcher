@@ -86,6 +86,7 @@ var _ = Describe("Run", func() {
 			_ filter.TaskCreationFilter,
 			_ pkg.Metrics,
 			_ string,
+			_ string,
 		) pkg.Watcher {
 			return watcherMock
 		}

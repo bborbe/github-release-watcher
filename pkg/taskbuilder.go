@@ -16,6 +16,7 @@ func BuildCreateCommand(release Release, cfg TaskConfig) task.CreateCommand {
 	taskIDStr := DeriveTaskID(release.Repo.Owner, release.Repo.Name, release.HeadSHA).String()
 	return task.CreateCommand{
 		Title:          ComputeTaskTitle(release),
+		TargetVault:    cfg.TargetVault,
 		TaskIdentifier: agentlib.TaskIdentifier(taskIDStr),
 		Frontmatter:    buildFrontmatter(release, taskIDStr, cfg),
 		Body:           buildTaskBody(release),

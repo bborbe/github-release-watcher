@@ -41,8 +41,12 @@ var _ = Describe("pkg.BuildCreateCommand", func() {
 				UnreleasedBullets: 5,
 				AutoRelease:       false,
 			}
-			cmd := pkg.BuildCreateCommand(release, pkg.TaskConfig{Stage: "dev"})
+			cmd := pkg.BuildCreateCommand(
+				release,
+				pkg.TaskConfig{Stage: "dev", TargetVault: "agent"},
+			)
 
+			Expect(cmd.TargetVault).To(Equal("agent"))
 			Expect(cmd.Frontmatter["task_type"]).To(Equal("github-release"))
 			Expect(cmd.Frontmatter["assignee"]).To(Equal("github-releaser-agent"))
 			Expect(cmd.Frontmatter["phase"]).To(Equal("planning"))

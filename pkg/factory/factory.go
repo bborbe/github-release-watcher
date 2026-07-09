@@ -65,12 +65,13 @@ func CreateWatcher(
 	taskCreationFilter filter.TaskCreationFilter,
 	metrics pkg.Metrics,
 	stage string,
+	targetVault string,
 ) pkg.Watcher {
 	ghClient := pkg.NewGitHubClient(httpClient)
 	publisher := pkg.NewTaskPublisher(
 		sender,
 		metrics,
-		pkg.TaskConfig{Stage: stage},
+		pkg.TaskConfig{Stage: stage, TargetVault: targetVault},
 	)
 	return pkg.NewWatcher(
 		ghClient,

@@ -45,16 +45,17 @@ type application struct {
 	SentryDSN   string `required:"false" arg:"sentry-dsn"   env:"SENTRY_DSN"   usage:"SentryDSN"    display:"length"`
 	SentryProxy string `required:"false" arg:"sentry-proxy" env:"SENTRY_PROXY" usage:"Sentry Proxy"`
 
-	Listen         string           `required:"false" arg:"listen"          env:"LISTEN"          usage:"HTTP listen address (healthz/readiness/metrics)"                                                 default:":9090"`
+	Listen         string           `required:"false" arg:"listen"          env:"LISTEN"          usage:"HTTP listen address (healthz/readiness/metrics)"                                                                                                                                                                                                                               default:":9090"`
 	Stage          string           `required:"true"  arg:"stage"           env:"STAGE"           usage:"Deployment stage (dev|prod)"`
+	TargetVault    string           `required:"false" arg:"target-vault"    env:"TARGET_VAULT"    usage:"Vault slug stamped on every CreateTaskCommand (matched verbatim against the controller's VAULT_NAME). Empty leaves it unset so the controller's legacy default-vault fallback applies — set this when the target vault is not the controller's legacy default (e.g. 'agent')."`
 	Owner          string           `required:"true"  arg:"owner"           env:"OWNER"           usage:"GitHub owner / org to scan (e.g. bborbe)"`
 	RepoAllowlist  string           `required:"false" arg:"repo-allowlist"  env:"REPO_ALLOWLIST"  usage:"Comma-separated host-qualified repo allowlist (host/owner/repo); empty = allow-all within owner"`
-	PollInterval   string           `required:"false" arg:"poll-interval"   env:"POLL_INTERVAL"   usage:"Poll interval (Go duration)"                                                                     default:"10m"`
-	CursorPath     string           `required:"false" arg:"cursor-path"     env:"CURSOR_PATH"     usage:"Cursor persistence path (mount a PVC)"                                                           default:"/data/cursor.json"`
+	PollInterval   string           `required:"false" arg:"poll-interval"   env:"POLL_INTERVAL"   usage:"Poll interval (Go duration)"                                                                                                                                                                                                                                                   default:"10m"`
+	CursorPath     string           `required:"false" arg:"cursor-path"     env:"CURSOR_PATH"     usage:"Cursor persistence path (mount a PVC)"                                                                                                                                                                                                                                         default:"/data/cursor.json"`
 	KafkaBrokers   libkafka.Brokers `required:"true"  arg:"kafka-brokers"   env:"KAFKA_BROKERS"   usage:"Comma-separated Kafka broker list"`
 	AppID          int64            `required:"false" arg:"app-id"          env:"APP_ID"          usage:"GitHub App ID (preferred auth path)"`
 	InstallationID int64            `required:"false" arg:"installation-id" env:"INSTALLATION_ID" usage:"GitHub App Installation ID"`
-	PEMKey         string           `required:"false" arg:"pem-key"         env:"PEM_KEY"         usage:"GitHub App PEM key (populated from k8s Secret)"                                                                              display:"length"`
+	PEMKey         string           `required:"false" arg:"pem-key"         env:"PEM_KEY"         usage:"GitHub App PEM key (populated from k8s Secret)"                                                                                                                                                                                                                                                            display:"length"`
 
 	// TopicPrefix selects the Kafka topic prefix used for CQRS topic construction
 	// (e.g. "develop" / "master"); independent of Stage, which remains the
@@ -113,6 +114,7 @@ func (a *application) Run(ctx context.Context, _ libsentry.Client) error {
 		staticFilters,
 		metrics,
 		a.Stage,
+		a.TargetVault,
 	)
 
 	// HTTP-side sender backs the /trigger handler.

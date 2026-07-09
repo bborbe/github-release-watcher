@@ -12,9 +12,10 @@ import (
 	"github.com/bborbe/errors"
 	"github.com/bborbe/github-release-watcher/mocks"
 	"github.com/bborbe/github-release-watcher/pkg/command"
-	lib "github.com/bborbe/maintainer"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+
+	lib "github.com/bborbe/maintainer"
 )
 
 // outcome is the three-state exit-path classifier for the table-driven test.
