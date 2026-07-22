@@ -10,6 +10,7 @@ import (
 	"net/http"
 
 	"github.com/bborbe/errors"
+	"github.com/golang/glog"
 	gogithub "github.com/google/go-github/v84/github"
 
 	"github.com/bborbe/maintainer/maintainerconfig"
@@ -27,8 +28,14 @@ var ErrRateLimited = stderrors.New("github rate limited")
 // Reference: watcher/github-pr/pkg/githubclient.go (uses SearchPRs + GetPRDetails);
 // watcher/github-build/pkg/githubclient.go (uses ListWorkflowRuns + GetJobInfoForRun).
 type GitHubClient interface {
-	// ListRepos returns non-archived repositories owned by owner.
-	// Pagination is internal; the returned slice is the full set.
+	// ListRepos returns the non-archived, non-fork repositories owned by owner
+	// that the authenticated GitHub App installation can access — public AND
+	// private. It enumerates the installation grant via
+	// GET /installation/repositories (Apps.ListRepos), NOT GET /users/{u}/repos:
+	// the latter silently omits private repos under an installation token (no
+	// error, no filter drop), which is why private auto-release repos never fired.
+	// Results are filtered to owner (an installation is scoped to one account, so
+	// this is defensive). Pagination is internal; the returned slice is the full set.
 	ListRepos(ctx context.Context, owner string) ([]Repo, error)
 
 	// GetMasterSHA returns the full HEAD SHA of repo's default branch.
@@ -83,64 +90,54 @@ func isRateLimitError(err error) bool {
 }
 
 func (c *githubClient) ListRepos(ctx context.Context, owner string) ([]Repo, error) {
-	user, _, err := c.client.Users.Get(ctx, owner)
-	if err != nil {
-		return nil, c.wrapRateLimitErr(ctx, err, "get user %s", owner)
-	}
-	isOrg := user.GetType() == "Organization"
-	return c.listOwnerReposPaginated(ctx, owner, isOrg)
-}
-
-func (c *githubClient) listOwnerReposPaginated(
-	ctx context.Context,
-	owner string,
-	isOrg bool,
-) ([]Repo, error) {
 	repos := make([]Repo, 0, 32)
-	page := 1
+	var total, private int
+	opts := &gogithub.ListOptions{PerPage: 100}
 	for {
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		default:
 		}
-		repoPage, resp, err := c.fetchRepoPage(ctx, owner, isOrg, page)
+		result, resp, err := c.client.Apps.ListRepos(ctx, opts)
 		if err != nil {
-			return nil, c.wrapRateLimitErr(ctx, err, "list repos for %s page=%d", owner, page)
+			return nil, c.wrapRateLimitErr(
+				ctx, err, "list installation repos for %s page=%d", owner, opts.Page,
+			)
 		}
-		repos = append(repos, mapGitHubRepos(repoPage)...)
+		for _, repo := range result.Repositories {
+			total++
+			if repo.GetPrivate() {
+				private++
+			}
+		}
+		repos = append(repos, mapGitHubRepos(result.Repositories, owner)...)
 		if resp == nil || resp.NextPage == 0 {
 			break
 		}
-		page = resp.NextPage
+		opts.Page = resp.NextPage
 	}
+	// Per-poll listing count so a silent shrink (e.g. an installation-scope change
+	// dropping repos) is observable in logs even before it drops a release task.
+	glog.Infof(
+		"github-release-watcher listed installation repos owner=%s total=%d private=%d in_scope=%d",
+		owner, total, private, len(repos),
+	)
 	return repos, nil
 }
 
-func (c *githubClient) fetchRepoPage(
-	ctx context.Context,
-	owner string,
-	isOrg bool,
-	page int,
-) ([]*gogithub.Repository, *gogithub.Response, error) {
-	if isOrg {
-		opts := &gogithub.RepositoryListByOrgOptions{
-			ListOptions: gogithub.ListOptions{PerPage: 100, Page: page},
-		}
-		return c.client.Repositories.ListByOrg(ctx, owner, opts)
-	}
-	opts := &gogithub.RepositoryListByUserOptions{
-		ListOptions: gogithub.ListOptions{PerPage: 100, Page: page},
-	}
-	return c.client.Repositories.ListByUser(ctx, owner, opts)
-}
-
-// mapGitHubRepos maps an API repo page into our domain Repo slice, dropping
-// archived and forked repos and any entry with an empty name.
-func mapGitHubRepos(repos []*gogithub.Repository) []Repo {
+// mapGitHubRepos maps an API repo page into our domain Repo slice, keeping only
+// repos owned by owner and dropping archived, forked, and empty-name entries.
+// The owner filter is defensive: a GitHub App installation is scoped to a single
+// account, so every returned repo already shares owner — but filtering keeps the
+// per-owner contract honest if that ever changes.
+func mapGitHubRepos(repos []*gogithub.Repository, owner string) []Repo {
 	var result []Repo
 	for _, repo := range repos {
 		if repo.GetArchived() || repo.GetFork() {
+			continue
+		}
+		if repo.GetOwner().GetLogin() != owner {
 			continue
 		}
 		name := repo.GetName()

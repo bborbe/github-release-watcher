@@ -56,7 +56,7 @@ func fakeProducerFactory(
 
 var _ = Describe("Run", func() {
 	var (
-		ctx         context.Context
+		ctx                 context.Context
 		watcherMock         *mocks.Watcher
 		app                 *runonce.Application
 		capturedTargetVault string
