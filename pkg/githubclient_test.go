@@ -33,29 +33,26 @@ var _ = Describe("pkg.GitHubClient", func() {
 	})
 
 	Describe("ListRepos", func() {
-		Context("user owner with pagination", func() {
-			It("paginates and filters archived/forks", func() {
+		Context("installation listing with pagination", func() {
+			It("hits /installation/repositories, paginates, and filters archived/forks", func() {
 				var serverURL string
 				var requestCount int
 				server := httptest.NewServer(
 					http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 						requestCount++
 						switch r.URL.Path {
-						case "/users/bborbe":
-							w.Header().Set("Content-Type", "application/json")
-							fmt.Fprintf(w, `{"login":"bborbe","type":"User"}`)
-						case "/users/bborbe/repos":
+						case "/installation/repositories":
 							page := r.URL.Query().Get("page")
 							w.Header().Set("Content-Type", "application/json")
-							if page == "1" {
+							if page == "" || page == "1" {
 								w.Header().
-									Set("Link", "<"+serverURL+"/users/bborbe/repos?page=2>; rel=\"next\"")
+									Set("Link", "<"+serverURL+"/installation/repositories?page=2>; rel=\"next\"")
 								fmt.Fprintf(
 									w,
-									`[{"name":"docker-utils","default_branch":"master","archived":false,"fork":false,"owner":{"login":"bborbe"}},{"name":"old-stuff","default_branch":"master","archived":true,"fork":false,"owner":{"login":"bborbe"}},{"name":"a-fork","default_branch":"main","archived":false,"fork":true,"owner":{"login":"bborbe"}}]`,
+									`{"total_count":3,"repositories":[{"name":"docker-utils","default_branch":"master","archived":false,"fork":false,"private":false,"owner":{"login":"bborbe"}},{"name":"old-stuff","default_branch":"master","archived":true,"fork":false,"private":false,"owner":{"login":"bborbe"}},{"name":"a-fork","default_branch":"main","archived":false,"fork":true,"private":false,"owner":{"login":"bborbe"}}]}`,
 								)
 							} else {
-								fmt.Fprintf(w, `[{"name":"disk-status","default_branch":"main","archived":false,"fork":false,"owner":{"login":"bborbe"}}]`)
+								fmt.Fprintf(w, `{"total_count":1,"repositories":[{"name":"disk-status","default_branch":"main","archived":false,"fork":false,"private":false,"owner":{"login":"bborbe"}}]}`)
 							}
 						default:
 							w.WriteHeader(http.StatusNotFound)
@@ -77,8 +74,62 @@ var _ = Describe("pkg.GitHubClient", func() {
 				Expect(repos[0].DefaultBranch).To(Equal("master"))
 				Expect(repos[1].Name).To(Equal("disk-status"))
 				Expect(repos[1].DefaultBranch).To(Equal("main"))
-				// 3 requests: user + page1 + page2
-				Expect(requestCount).To(Equal(3))
+				// 2 requests: page1 + page2 (no separate user-type lookup)
+				Expect(requestCount).To(Equal(2))
+			})
+		})
+
+		Context("private repos", func() {
+			It(
+				"includes private repos the installation can access (regression: ListByUser omitted them)",
+				func() {
+					server := httptest.NewServer(
+						http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+							Expect(r.URL.Path).To(Equal("/installation/repositories"))
+							w.Header().Set("Content-Type", "application/json")
+							fmt.Fprintf(
+								w,
+								`{"total_count":2,"repositories":[{"name":"vault-cli","default_branch":"master","archived":false,"fork":false,"private":false,"owner":{"login":"bborbe"}},{"name":"jira-task-creator","default_branch":"master","archived":false,"fork":false,"private":true,"owner":{"login":"bborbe"}}]}`,
+							)
+						}),
+					)
+					defer server.Close()
+
+					client := pkg.NewGitHubClient(server.Client())
+					err := pkg.SetBaseURL(client, server.URL+"/")
+					Expect(err).NotTo(HaveOccurred())
+
+					repos, err := client.ListRepos(ctx, "bborbe")
+					Expect(err).NotTo(HaveOccurred())
+					names := []string{repos[0].Name, repos[1].Name}
+					Expect(names).To(ContainElement("jira-task-creator"))
+					Expect(names).To(ContainElement("vault-cli"))
+				},
+			)
+		})
+
+		Context("foreign owner", func() {
+			It("drops repos not owned by the requested owner", func() {
+				server := httptest.NewServer(
+					http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+						Expect(r.URL.Path).To(Equal("/installation/repositories"))
+						w.Header().Set("Content-Type", "application/json")
+						fmt.Fprintf(
+							w,
+							`{"total_count":2,"repositories":[{"name":"mine","default_branch":"master","archived":false,"fork":false,"private":false,"owner":{"login":"bborbe"}},{"name":"theirs","default_branch":"master","archived":false,"fork":false,"private":false,"owner":{"login":"someone-else"}}]}`,
+						)
+					}),
+				)
+				defer server.Close()
+
+				client := pkg.NewGitHubClient(server.Client())
+				err := pkg.SetBaseURL(client, server.URL+"/")
+				Expect(err).NotTo(HaveOccurred())
+
+				repos, err := client.ListRepos(ctx, "bborbe")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(repos).To(HaveLen(1))
+				Expect(repos[0].Name).To(Equal("mine"))
 			})
 		})
 
@@ -104,39 +155,6 @@ var _ = Describe("pkg.GitHubClient", func() {
 
 				_, err = client.ListRepos(ctx, "bborbe")
 				Expect(err).To(MatchError(pkg.ErrRateLimited))
-			})
-		})
-
-		Context("org owner", func() {
-			It("calls ListByOrg", func() {
-				server := httptest.NewServer(
-					http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-						switch r.URL.Path {
-						case "/users/testorg":
-							w.Header().Set("Content-Type", "application/json")
-							fmt.Fprintf(w, `{"login":"testorg","type":"Organization"}`)
-						case "/orgs/testorg/repos":
-							w.Header().Set("Content-Type", "application/json")
-							fmt.Fprintf(
-								w,
-								`[{"name":"org-repo","default_branch":"main","archived":false,"fork":false,"owner":{"login":"testorg"}}]`,
-							)
-						default:
-							w.WriteHeader(http.StatusNotFound)
-							fmt.Fprintf(w, "unexpected route: %s", r.URL.Path)
-						}
-					}),
-				)
-				defer server.Close()
-
-				client := pkg.NewGitHubClient(server.Client())
-				err := pkg.SetBaseURL(client, server.URL+"/")
-				Expect(err).NotTo(HaveOccurred())
-
-				repos, err := client.ListRepos(ctx, "testorg")
-				Expect(err).NotTo(HaveOccurred())
-				Expect(repos).To(HaveLen(1))
-				Expect(repos[0].Name).To(Equal("org-repo"))
 			})
 		})
 	})

@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+- fix: list repositories via `GET /installation/repositories` (`Apps.ListRepos`) instead of `GET /users/{u}/repos` (`Repositories.ListByUser`/`ListByOrg`). The user/org endpoints silently omit **private** repos under a GitHub App installation token — no error, no filter drop — so private repos with `autoRelease: true` (e.g. `bborbe/jira-task-creator`) never got a release task and had to be released by hand. The installation endpoint enumerates exactly the installation grant (public + private); results are still filtered to `OWNER`, archived, and forks.
+- feat: log a per-poll installation-listing count (`total` / `private` / `in_scope`) so a silent listing shrink is observable in logs before it drops a release task.
+- chore: bump `golang.org/x/text` v0.38.0 → v0.39.0 to clear advisory GO-2026-5970 (infinite loop on invalid input).
+
 ## v0.2.0
 
 - feat: add optional `--target-vault` / `TARGET_VAULT` flag. When set, the watcher stamps `TargetVault` on every emitted `CreateTaskCommand`, so it routes to a controller whose `VAULT_NAME` matches verbatim. Empty (default) leaves `TargetVault` unset (`omitempty` → wire byte-compatible), preserving the controller's legacy default-vault fallback. Enables deployments whose work-vault is not the controller's hardcoded legacy default (e.g. the Seibert-Data `agent` vault). Threaded through both the poll watcher and the `run-once` command.
