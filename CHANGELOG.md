@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## v0.3.0
 
 - fix: list repositories via `GET /installation/repositories` (`Apps.ListRepos`) instead of `GET /users/{u}/repos` (`Repositories.ListByUser`/`ListByOrg`). The user/org endpoints silently omit **private** repos under a GitHub App installation token — no error, no filter drop — so private repos with `autoRelease: true` (e.g. `bborbe/jira-task-creator`) never got a release task and had to be released by hand. The installation endpoint enumerates exactly the installation grant (public + private); results are still filtered to `OWNER`, archived, and forks.
 - feat: log a per-poll installation-listing count (`total` / `private` / `in_scope`) so a silent listing shrink is observable in logs before it drops a release task.
