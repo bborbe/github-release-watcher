@@ -13,13 +13,14 @@ package pkg
 //  1. Repo (from scope filter + ListRepos)
 //  2. HeadSHA (from GetMasterSHA)
 //  3. UnreleasedBullets + CurrentVersion (from ParseChangelog on GetChangelogContent)
-//  4. AutoRelease (from GetMaintainerConfig — zero-value if .maintainer.yaml absent)
+//  4. AutoRelease + AllowFork (from GetMaintainerConfig — zero-value if .maintainer.yaml absent)
 type Release struct {
 	Repo              Repo
 	HeadSHA           string // full SHA of master HEAD
 	CurrentVersion    string // latest "## vX.Y.Z" header from CHANGELOG; "v0.0.0" if none
 	UnreleasedBullets int    // count of "^- " lines under "## Unreleased"
 	AutoRelease       bool   // .maintainer.yaml: release.autoRelease — true means the repo is opted into maintainer-bot auto-release (gate input)
+	AllowFork         bool   // .maintainer.yaml: release.allowFork — true means a fork of this repo is still auto-release eligible (filter.NewForkFilter gate input)
 }
 
 // ShortSHA returns the first 7 chars of HeadSHA, used in task title + filename.

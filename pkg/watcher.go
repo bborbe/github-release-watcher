@@ -35,7 +35,7 @@ type Watcher interface {
 //
 // Owner = single GitHub org per watcher instance (multi-org = multiple deployments).
 // taskCreationFilter is the cycle-invariant chain (scope + empty_unreleased +
-// auto_release); SHAUnchangedFilter is composed in per cycle since it needs a
+// auto_release + fork); SHAUnchangedFilter is composed in per cycle since it needs a
 // fresh CursorReader.
 func NewWatcher(
 	ghClient GitHubClient,
@@ -158,9 +158,21 @@ func (w *watcher) processRepos(
 			HeadSHA:           release.HeadSHA,
 			UnreleasedBullets: release.UnreleasedBullets,
 			AutoRelease:       release.AutoRelease,
+			Fork:              repo.Fork,
+			AllowFork:         release.AllowFork,
 		}
 		if reason := cycleFilter.Skip(filterInput); reason != "" {
 			w.metrics.IncFilterSkipped(reason)
+			// The fork drop used to happen silently at ListRepos time (before
+			// forks reached any filter) — this line is the fix: name the repo
+			// AND the reason so a fork stuck behind a missing/typo'd
+			// `allowFork` is debuggable from logs alone, not a 40min diagnosis.
+			if reason == "fork" {
+				glog.Infof(
+					"github-release-watcher skipping fork %s reason=allowFork-not-set",
+					repo.Key(),
+				)
+			}
 			continue
 		}
 
@@ -217,6 +229,7 @@ func (w *watcher) gatherRelease(ctx context.Context, repo Repo) (Release, string
 		CurrentVersion:    currentVersion,
 		UnreleasedBullets: summary.UnreleasedBullets,
 		AutoRelease:       maintainerCfg.Release.AutoRelease,
+		AllowFork:         maintainerCfg.Release.AllowFork,
 	}, "", false
 }
 

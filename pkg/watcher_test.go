@@ -127,6 +127,76 @@ var _ = Describe("pkg.Watcher.Poll", func() {
 		})
 	})
 
+	Describe("Poll fork trust gate", func() {
+		var staticFilters filter.TaskCreationFilter
+
+		BeforeEach(func() {
+			staticFilters = filter.TaskCreationFilters{
+				filter.NewRepoAllowlistFilter(nil),
+				filter.NewEmptyUnreleasedFilter(),
+				filter.NewAutoReleaseFilter(),
+				filter.NewForkFilter(),
+			}
+
+			ghClient.GetMasterSHAReturns("d630ef3526cfc57fbdccd9ba53c5c3a02945e407", nil)
+			ghClient.GetChangelogContentReturns(
+				[]byte("## Unreleased\n\n- entry one\n\n## v1.7.7\n"),
+				nil,
+			)
+			publisher.PublishCreateReturns(true)
+		})
+
+		It("publishes a fork's release when AllowFork is true", func() {
+			ghClient.ListReposReturns([]pkg.Repo{
+				{Owner: "bborbe", Name: "a-fork", DefaultBranch: "master", Fork: true},
+			}, nil)
+			ghClient.GetMaintainerConfigReturns(maintainerconfig.MaintainerConfig{
+				Release: maintainerconfig.ReleaseConfig{AutoRelease: true, AllowFork: true},
+			}, nil)
+
+			w := pkg.NewWatcher(ghClient, publisher, metrics, cursorPath, "bborbe", staticFilters)
+			Expect(w.Poll(ctx, false)).To(Succeed())
+
+			Expect(publisher.PublishCreateCallCount()).To(Equal(1))
+			_, release := publisher.PublishCreateArgsForCall(0)
+			Expect(release.Repo.Name).To(Equal("a-fork"))
+			Expect(metrics.IncFilterSkippedCallCount()).To(Equal(0))
+		})
+
+		It("skips a fork's release with 'fork' label when AllowFork is false", func() {
+			ghClient.ListReposReturns([]pkg.Repo{
+				{Owner: "bborbe", Name: "a-fork", DefaultBranch: "master", Fork: true},
+			}, nil)
+			ghClient.GetMaintainerConfigReturns(maintainerconfig.MaintainerConfig{
+				Release: maintainerconfig.ReleaseConfig{AutoRelease: true, AllowFork: false},
+			}, nil)
+
+			w := pkg.NewWatcher(ghClient, publisher, metrics, cursorPath, "bborbe", staticFilters)
+			Expect(w.Poll(ctx, false)).To(Succeed())
+
+			Expect(publisher.PublishCreateCallCount()).To(Equal(0))
+			Expect(metrics.IncFilterSkippedCallCount()).To(Equal(1))
+			Expect(metrics.IncFilterSkippedArgsForCall(0)).To(Equal("fork"))
+		})
+
+		It("publishes a non-fork's release unchanged regardless of AllowFork", func() {
+			ghClient.ListReposReturns([]pkg.Repo{
+				{Owner: "bborbe", Name: "docker-utils", DefaultBranch: "master", Fork: false},
+			}, nil)
+			ghClient.GetMaintainerConfigReturns(maintainerconfig.MaintainerConfig{
+				Release: maintainerconfig.ReleaseConfig{AutoRelease: true, AllowFork: false},
+			}, nil)
+
+			w := pkg.NewWatcher(ghClient, publisher, metrics, cursorPath, "bborbe", staticFilters)
+			Expect(w.Poll(ctx, false)).To(Succeed())
+
+			Expect(publisher.PublishCreateCallCount()).To(Equal(1))
+			_, release := publisher.PublishCreateArgsForCall(0)
+			Expect(release.Repo.Name).To(Equal("docker-utils"))
+			Expect(metrics.IncFilterSkippedCallCount()).To(Equal(0))
+		})
+	})
+
 	Describe("Poll aborts cycle and skips cursor save on ListRepos rate-limit", func() {
 		BeforeEach(func() {
 			ghClient.ListReposReturns(nil, pkg.ErrRateLimited)

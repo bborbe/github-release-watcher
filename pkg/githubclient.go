@@ -28,9 +28,15 @@ var ErrRateLimited = stderrors.New("github rate limited")
 // Reference: watcher/github-pr/pkg/githubclient.go (uses SearchPRs + GetPRDetails);
 // watcher/github-build/pkg/githubclient.go (uses ListWorkflowRuns + GetJobInfoForRun).
 type GitHubClient interface {
-	// ListRepos returns the non-archived, non-fork repositories owned by owner
-	// that the authenticated GitHub App installation can access — public AND
-	// private. It enumerates the installation grant via
+	// ListRepos returns the non-archived repositories owned by owner that the
+	// authenticated GitHub App installation can access — public AND private.
+	// Forks are INCLUDED here (Repo.Fork carries the flag); whether a fork is
+	// actually eligible for auto-release is decided downstream by the
+	// filter.NewForkFilter trust gate on `.maintainer.yaml: release.allowFork`,
+	// not by this listing step. Dropping forks at listing time (the pre-v0.48.0
+	// behaviour) meant a fork with autoRelease: true never released and never
+	// logged why — see filter.NewForkFilter doc for the incident.
+	// It enumerates the installation grant via
 	// GET /installation/repositories (Apps.ListRepos), NOT GET /users/{u}/repos:
 	// the latter silently omits private repos under an installation token (no
 	// error, no filter drop), which is why private auto-release repos never fired.
@@ -117,24 +123,40 @@ func (c *githubClient) ListRepos(ctx context.Context, owner string) ([]Repo, err
 		}
 		opts.Page = resp.NextPage
 	}
+	var forks int
+	for _, repo := range repos {
+		if repo.Fork {
+			forks++
+		}
+	}
 	// Per-poll listing count so a silent shrink (e.g. an installation-scope change
 	// dropping repos) is observable in logs even before it drops a release task.
+	// forks= is now included in in_scope (as of the fork trust-gate change) —
+	// eligibility for those is decided downstream by filter.NewForkFilter, see
+	// its skip-reason log line for the per-repo verdict.
 	glog.Infof(
-		"github-release-watcher listed installation repos owner=%s total=%d private=%d in_scope=%d",
-		owner, total, private, len(repos),
+		"github-release-watcher listed installation repos owner=%s total=%d private=%d forks=%d in_scope=%d",
+		owner,
+		total,
+		private,
+		forks,
+		len(repos),
 	)
 	return repos, nil
 }
 
 // mapGitHubRepos maps an API repo page into our domain Repo slice, keeping only
-// repos owned by owner and dropping archived, forked, and empty-name entries.
+// repos owned by owner and dropping archived and empty-name entries. Forks are
+// KEPT (with Fork: true set) — the fork-vs-not-fork decision belongs to
+// filter.NewForkFilter downstream, not to this listing step; see that filter's
+// doc comment for why forks used to be dropped here and what broke.
 // The owner filter is defensive: a GitHub App installation is scoped to a single
 // account, so every returned repo already shares owner — but filtering keeps the
 // per-owner contract honest if that ever changes.
 func mapGitHubRepos(repos []*gogithub.Repository, owner string) []Repo {
 	var result []Repo
 	for _, repo := range repos {
-		if repo.GetArchived() || repo.GetFork() {
+		if repo.GetArchived() {
 			continue
 		}
 		if repo.GetOwner().GetLogin() != owner {
@@ -148,6 +170,7 @@ func mapGitHubRepos(repos []*gogithub.Repository, owner string) []Repo {
 			Owner:         repo.GetOwner().GetLogin(),
 			Name:          name,
 			DefaultBranch: repo.GetDefaultBranch(),
+			Fork:          repo.GetFork(),
 		})
 	}
 	return result

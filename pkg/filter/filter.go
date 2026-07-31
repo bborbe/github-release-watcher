@@ -11,7 +11,8 @@
 //  1. RepoAllowlistFilter — scope guard (allowlist via env)
 //  2. EmptyUnreleasedFilter — skip if ## Unreleased has zero bullets
 //  3. AutoReleaseFilter — pass only if .maintainer.yaml: release.autoRelease: true; skip otherwise (gate)
-//  4. SHAUnchangedFilter — skip if cursor already recorded this master HEAD
+//  4. ForkFilter — pass non-forks; for forks, pass only if .maintainer.yaml: release.allowFork: true (gate)
+//  5. SHAUnchangedFilter — skip if cursor already recorded this master HEAD
 package filter
 
 //counterfeiter:generate -o ../../mocks/task_creation_filter.go --fake-name TaskCreationFilter . TaskCreationFilter
@@ -24,6 +25,8 @@ type Release struct {
 	HeadSHA           string // full SHA — for SHAUnchangedFilter
 	UnreleasedBullets int    // for EmptyUnreleasedFilter
 	AutoRelease       bool   // .maintainer.yaml: release.autoRelease — true means opted in to maintainer-bot auto-release
+	Fork              bool   // GitHub API repo.fork — for ForkFilter
+	AllowFork         bool   // .maintainer.yaml: release.allowFork — true means a fork is still auto-release eligible
 }
 
 // TaskCreationFilter decides whether a single Release should be skipped
