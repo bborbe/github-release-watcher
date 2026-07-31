@@ -34,49 +34,58 @@ var _ = Describe("pkg.GitHubClient", func() {
 
 	Describe("ListRepos", func() {
 		Context("installation listing with pagination", func() {
-			It("hits /installation/repositories, paginates, and filters archived/forks", func() {
-				var serverURL string
-				var requestCount int
-				server := httptest.NewServer(
-					http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-						requestCount++
-						switch r.URL.Path {
-						case "/installation/repositories":
-							page := r.URL.Query().Get("page")
-							w.Header().Set("Content-Type", "application/json")
-							if page == "" || page == "1" {
-								w.Header().
-									Set("Link", "<"+serverURL+"/installation/repositories?page=2>; rel=\"next\"")
-								fmt.Fprintf(
-									w,
-									`{"total_count":3,"repositories":[{"name":"docker-utils","default_branch":"master","archived":false,"fork":false,"private":false,"owner":{"login":"bborbe"}},{"name":"old-stuff","default_branch":"master","archived":true,"fork":false,"private":false,"owner":{"login":"bborbe"}},{"name":"a-fork","default_branch":"main","archived":false,"fork":true,"private":false,"owner":{"login":"bborbe"}}]}`,
-								)
-							} else {
-								fmt.Fprintf(w, `{"total_count":1,"repositories":[{"name":"disk-status","default_branch":"main","archived":false,"fork":false,"private":false,"owner":{"login":"bborbe"}}]}`)
+			It(
+				"hits /installation/repositories, paginates, filters archived, and keeps forks",
+				func() {
+					var serverURL string
+					var requestCount int
+					server := httptest.NewServer(
+						http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+							requestCount++
+							switch r.URL.Path {
+							case "/installation/repositories":
+								page := r.URL.Query().Get("page")
+								w.Header().Set("Content-Type", "application/json")
+								if page == "" || page == "1" {
+									w.Header().
+										Set("Link", "<"+serverURL+"/installation/repositories?page=2>; rel=\"next\"")
+									fmt.Fprintf(
+										w,
+										`{"total_count":3,"repositories":[{"name":"docker-utils","default_branch":"master","archived":false,"fork":false,"private":false,"owner":{"login":"bborbe"}},{"name":"old-stuff","default_branch":"master","archived":true,"fork":false,"private":false,"owner":{"login":"bborbe"}},{"name":"a-fork","default_branch":"main","archived":false,"fork":true,"private":false,"owner":{"login":"bborbe"}}]}`,
+									)
+								} else {
+									fmt.Fprintf(w, `{"total_count":1,"repositories":[{"name":"disk-status","default_branch":"main","archived":false,"fork":false,"private":false,"owner":{"login":"bborbe"}}]}`)
+								}
+							default:
+								w.WriteHeader(http.StatusNotFound)
+								fmt.Fprintf(w, "unexpected route: %s", r.URL.Path)
 							}
-						default:
-							w.WriteHeader(http.StatusNotFound)
-							fmt.Fprintf(w, "unexpected route: %s", r.URL.Path)
-						}
-					}),
-				)
-				defer server.Close()
-				serverURL = server.URL
+						}),
+					)
+					defer server.Close()
+					serverURL = server.URL
 
-				client := pkg.NewGitHubClient(server.Client())
-				err := pkg.SetBaseURL(client, server.URL+"/")
-				Expect(err).NotTo(HaveOccurred())
+					client := pkg.NewGitHubClient(server.Client())
+					err := pkg.SetBaseURL(client, server.URL+"/")
+					Expect(err).NotTo(HaveOccurred())
 
-				repos, err := client.ListRepos(ctx, "bborbe")
-				Expect(err).NotTo(HaveOccurred())
-				Expect(repos).To(HaveLen(2))
-				Expect(repos[0].Name).To(Equal("docker-utils"))
-				Expect(repos[0].DefaultBranch).To(Equal("master"))
-				Expect(repos[1].Name).To(Equal("disk-status"))
-				Expect(repos[1].DefaultBranch).To(Equal("main"))
-				// 2 requests: page1 + page2 (no separate user-type lookup)
-				Expect(requestCount).To(Equal(2))
-			})
+					repos, err := client.ListRepos(ctx, "bborbe")
+					Expect(err).NotTo(HaveOccurred())
+					Expect(repos).To(HaveLen(3))
+					Expect(repos[0].Name).To(Equal("docker-utils"))
+					Expect(repos[0].DefaultBranch).To(Equal("master"))
+					Expect(repos[0].Fork).To(BeFalse())
+					Expect(repos[1].Name).To(Equal("a-fork"))
+					Expect(repos[1].DefaultBranch).To(Equal("main"))
+					Expect(repos[1].Fork).To(BeTrue())
+					Expect(repos[2].Name).To(Equal("disk-status"))
+					Expect(repos[2].DefaultBranch).To(Equal("main"))
+					Expect(repos[2].Fork).To(BeFalse())
+					// "old-stuff" (archived) is still dropped at listing.
+					// 2 requests: page1 + page2 (no separate user-type lookup)
+					Expect(requestCount).To(Equal(2))
+				},
+			)
 		})
 
 		Context("private repos", func() {

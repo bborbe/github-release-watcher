@@ -35,8 +35,9 @@ func CreateKafkaSender(
 }
 
 // CreateStaticFilters builds the cycle-invariant filter chain (scope +
-// empty_unreleased + auto_release gate). SHAUnchangedFilter is composed in per
-// cycle inside Watcher.Poll because it needs a fresh CursorReader.
+// empty_unreleased + auto_release gate + fork gate). SHAUnchangedFilter is
+// composed in per cycle inside Watcher.Poll because it needs a fresh
+// CursorReader.
 //
 // Shared by main.go and cmd/run-once/main.go so adding a new filter only
 // touches one place.
@@ -45,6 +46,7 @@ func CreateStaticFilters(allowlist []string) filter.TaskCreationFilter {
 		filter.NewRepoAllowlistFilter(allowlist),
 		filter.NewEmptyUnreleasedFilter(),
 		filter.NewAutoReleaseFilter(),
+		filter.NewForkFilter(),
 	}
 }
 

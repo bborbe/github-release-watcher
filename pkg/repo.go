@@ -11,6 +11,7 @@ type Repo struct {
 	Owner         string
 	Name          string
 	DefaultBranch string // typically "master" or "main"; cached to avoid per-poll lookup
+	Fork          bool   // true when the GitHub API reports this repo as a fork; trust-gate input (see filter.NewForkFilter)
 }
 
 // Key returns the host-qualified repo key matching [[Agent Task File Contract]]

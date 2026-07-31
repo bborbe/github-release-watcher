@@ -20,7 +20,7 @@ type Metrics interface {
 	// IncReposScanned — increment by N repos scanned in the cycle (cardinality: none).
 	IncReposScanned(n int)
 
-	// IncFilterSkipped — reason: "empty_unreleased" | "auto_release" | "sha_unchanged" | "scope"
+	// IncFilterSkipped — reason: "empty_unreleased" | "auto_release" | "sha_unchanged" | "scope" | "fork"
 	IncFilterSkipped(reason string)
 }
 
@@ -68,7 +68,7 @@ func NewMetrics(registerer prometheus.Registerer) Metrics {
 	for _, s := range []string{"create", "error"} {
 		m.publishedTotal.WithLabelValues(s).Add(0)
 	}
-	for _, r := range []string{"empty_unreleased", "auto_release", "sha_unchanged", "scope"} {
+	for _, r := range []string{"empty_unreleased", "auto_release", "sha_unchanged", "scope", "fork"} {
 		m.filterSkippedTotal.WithLabelValues(r).Add(0)
 	}
 	return m
