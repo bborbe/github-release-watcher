@@ -106,7 +106,7 @@ No `/check` or `/trigger` endpoint — release work is one-task-per-repo-per-mas
 | `github_release_watcher_poll_cycle_total{result}` | `result=success\|github_error\|rate_limited` | Poll health |
 | `github_release_watcher_published_total{status}` | `status=create\|skipped\|error` | Per-cycle task emission |
 | `github_release_watcher_repos_scanned_total` | none | Sanity check on scope filter |
-| `github_release_watcher_filter_skipped_total{reason}` | `reason=empty_unreleased\|auto_release\|sha_unchanged\|scope` | Filter chain visibility |
+| `github_release_watcher_filter_skipped_total{reason}` | `reason=empty_unreleased\|auto_release\|sha_unchanged\|scope\|fork` | Filter chain visibility |
 
 ## Development
 
