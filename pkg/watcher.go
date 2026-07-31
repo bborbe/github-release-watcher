@@ -167,8 +167,12 @@ func (w *watcher) processRepos(
 			// forks reached any filter) — this line is the fix: name the repo
 			// AND the reason so a fork stuck behind a missing/typo'd
 			// `allowFork` is debuggable from logs alone, not a 40min diagnosis.
+			// V(2) matches the per-repo convention above (see the "repo dropped
+			// from cycle" note) — always-on visibility is carried by the
+			// ungated forks= count in the ListRepos summary and by
+			// filter_skipped_total{reason="fork"}, so V0 is not needed here.
 			if reason == "fork" {
-				glog.Infof(
+				glog.V(2).Infof(
 					"github-release-watcher skipping fork %s reason=allowFork-not-set",
 					repo.Key(),
 				)
