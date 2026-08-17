@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+- chore: update Go to 1.26.6 and update dependencies (clears GO-2026-6179, GO-2026-6180, CVE-2026-56864, CVE-2026-56865 via golang.org/x/mod@v0.40.0, and stdlib advisories GO-2026-5026, GO-2026-5972, GO-2026-6089, GO-2026-6090, GO-2026-6218 via the go directive bump)
+
 ## v0.3.1
 
 - fix: move the fork check out of repo listing (`ListRepos`/`mapGitHubRepos`) and into the `TaskCreationFilter` chain as a new `filter.NewForkFilter` trust gate on `.maintainer.yaml: release.allowFork` (requires `github.com/bborbe/maintainer` v0.48.0). Previously forks were dropped silently at listing time, upstream of every filter — a fork with `autoRelease: true` never released and emitted no log line (found on `bborbe/tts-mcp`; cost ~40min to diagnose). Forks now enter the scan set (`Repo.Fork` carries the flag), pass the gate when `allowFork: true`, and are skipped with a `fork` reason (`Metrics.IncFilterSkipped("fork")` + a glog line naming the repo) otherwise — archived repos are still dropped at listing. The per-poll listing log now reports `forks=N` in addition to `total`/`private`/`in_scope`.
