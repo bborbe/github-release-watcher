@@ -4,17 +4,17 @@ go 1.26.6
 
 require (
 	github.com/IBM/sarama v1.60.1
-	github.com/bborbe/agent v0.81.1
-	github.com/bborbe/cqrs v0.6.6
-	github.com/bborbe/errors v1.5.17
-	github.com/bborbe/http v1.26.20
+	github.com/bborbe/agent v0.81.3
+	github.com/bborbe/cqrs v0.6.7
+	github.com/bborbe/errors v1.5.18
+	github.com/bborbe/http v1.26.22
 	github.com/bborbe/kafka v1.25.8
-	github.com/bborbe/kv v1.21.9
+	github.com/bborbe/kv v1.21.10
 	github.com/bborbe/log v1.6.22
-	github.com/bborbe/maintainer v0.49.0
-	github.com/bborbe/parse v1.10.19
-	github.com/bborbe/run v1.9.34
-	github.com/bborbe/sentry v1.9.24
+	github.com/bborbe/maintainer v0.49.1
+	github.com/bborbe/parse v1.10.20
+	github.com/bborbe/run v1.9.35
+	github.com/bborbe/sentry v1.9.25
 	github.com/bborbe/service v1.10.8
 	github.com/golang/glog v1.2.5
 	github.com/google/go-github/v84 v84.0.0
@@ -27,21 +27,21 @@ require (
 
 require (
 	github.com/Masterminds/semver/v3 v3.5.0 // indirect
-	github.com/bborbe/argument/v2 v2.12.34 // indirect
-	github.com/bborbe/collection v1.20.20 // indirect
-	github.com/bborbe/k8s v1.14.9 // indirect
-	github.com/bborbe/math v1.3.18 // indirect
-	github.com/bborbe/strimzi v1.8.12 // indirect
-	github.com/bborbe/time v1.27.8 // indirect
+	github.com/bborbe/argument/v2 v2.12.35 // indirect
+	github.com/bborbe/collection v1.20.22 // indirect
+	github.com/bborbe/k8s v1.14.10 // indirect
+	github.com/bborbe/math v1.3.20 // indirect
+	github.com/bborbe/strimzi v1.8.13 // indirect
+	github.com/bborbe/time v1.27.9 // indirect
 	github.com/bborbe/validation v1.4.19 // indirect
-	github.com/bborbe/vault-cli v0.111.4 // indirect
+	github.com/bborbe/vault-cli v0.112.0 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/bradleyfalzon/ghinstallation/v2 v2.19.0 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/eapache/go-resiliency v1.7.0 // indirect
 	github.com/emicklei/go-restful/v3 v3.13.0 // indirect
-	github.com/fxamacker/cbor/v2 v2.9.2 // indirect
+	github.com/fxamacker/cbor/v2 v2.9.3 // indirect
 	github.com/getsentry/sentry-go v0.48.0 // indirect
 	github.com/go-errors/errors v1.5.1 // indirect
 	github.com/go-logr/logr v1.4.4 // indirect
@@ -77,7 +77,7 @@ require (
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
 	github.com/modern-go/reflect2 v1.0.3-0.20250322232337-35a7c28c31ee // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
-	github.com/pierrec/lz4/v4 v4.1.28 // indirect
+	github.com/pierrec/lz4/v4 v4.1.29 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
 	github.com/prometheus/client_model v0.6.2 // indirect
