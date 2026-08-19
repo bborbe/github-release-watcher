@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+- chore: update dependencies to clear CVEs/CGOs: CVE-2026-56864, CVE-2026-56865, GO-2026-6179, GO-2026-6180, GO-2026-5026, GO-2026-5972, GO-2026-6089, GO-2026-6090, GO-2026-6218
+
 ## v0.3.2
 
 - chore: bump Go 1.26.5 → 1.26.6 and update dependencies to clear CVEs/CGOs: CVE-2026-56864, CVE-2026-56865, GO-2026-6179, GO-2026-6180, GO-2026-5026, GO-2026-5972, GO-2026-6089, GO-2026-6090, GO-2026-6218
