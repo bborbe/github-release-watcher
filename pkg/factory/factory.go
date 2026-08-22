@@ -21,6 +21,7 @@ import (
 	libkv "github.com/bborbe/kv"
 	"github.com/bborbe/log"
 	"github.com/bborbe/run"
+	libtime "github.com/bborbe/time"
 
 	lib "github.com/bborbe/maintainer"
 )
@@ -113,6 +114,19 @@ func CreateTriggerReleaseCheckHandler(
 	sender command.TriggerReleaseCheckCommandSender,
 ) handler.TriggerReleaseCheckHandler {
 	return handler.NewTriggerReleaseCheckHandler(sender)
+}
+
+// CreateWebhookHandler wires the thin webhook receiver that publishes a
+// TriggerReleaseCheckCommand to Kafka for each signature-verified push
+// delivery on /webhook/github-release. Filter/trust work stays in the in-pod
+// command consumer (shared with /trigger).
+func CreateWebhookHandler(
+	sender command.TriggerReleaseCheckCommandSender,
+	secret string,
+	metrics handler.WebhookMetrics,
+	clock libtime.CurrentDateTimeGetter,
+) handler.WebhookHandler {
+	return handler.NewWebhookHandler(sender, secret, metrics, clock)
 }
 
 // CreateCommandConsumer wires a run.Func that consumes TriggerReleaseCheckCommand
