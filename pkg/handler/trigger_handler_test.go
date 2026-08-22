@@ -92,7 +92,7 @@ var _ = Describe("TriggerHandler", func() {
 			// sender is safe; the reflect runs BEFORE any method call.
 			concrete := handler.NewTriggerReleaseCheckHandler(nil)
 			t := reflect.TypeOf(concrete)
-			if t.Kind() == reflect.Ptr {
+			if t.Kind() == reflect.Pointer {
 				t = t.Elem()
 			}
 			watcherType := reflect.TypeOf((*pkg.Watcher)(nil)).Elem()
