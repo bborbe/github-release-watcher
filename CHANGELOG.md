@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## v0.4.0
 
 - feat: GitHub webhook receiver for instant release-check trigger — POST `/webhook/github-release`, HMAC `X-Hub-Signature-256` verification, `push` events dispatch `TriggerReleaseCheckCommand` to Kafka (release check starts seconds after a merge instead of the 10-min poll); metrics `webhook_deliveries_total`, `webhook_signature_rejections_total`, `webhook_dispatch_latency_seconds`
 
