@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+- feat: GitHub webhook receiver for instant release-check trigger — POST `/webhook/github-release`, HMAC `X-Hub-Signature-256` verification, `push` events dispatch `TriggerReleaseCheckCommand` to Kafka (release check starts seconds after a merge instead of the 10-min poll); metrics `webhook_deliveries_total`, `webhook_signature_rejections_total`, `webhook_dispatch_latency_seconds`
+
 ## v0.3.4
 
 - chore: Bump errcheck to v1.20.0 and golangci-lint to v2.13.1 for Go 1.27 support

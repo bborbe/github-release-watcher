@@ -29,6 +29,7 @@ import (
 	"github.com/bborbe/run"
 	libsentry "github.com/bborbe/sentry"
 	"github.com/bborbe/service"
+	libtime "github.com/bborbe/time"
 	"github.com/golang/glog"
 	"github.com/gorilla/mux"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -63,7 +64,9 @@ type application struct {
 	// purposes. Empty means unprefixed topics.
 	TopicPrefix base.TopicPrefix `required:"false" arg:"topic-prefix" env:"TOPIC_PREFIX" usage:"Kafka topic prefix for CQRS topic construction"`
 
+	WebhookSecret  string `required:"false" arg:"webhook-secret" env:"WEBHOOK_SECRET" usage:"GitHub webhook secret for HMAC verification of /webhook/github-release" display:"length"`
 	TriggerHandler http.Handler
+	WebhookHandler http.Handler
 }
 
 //nolint:funlen // wires Run from validated config — extracting any chunk hurts readability without reducing complexity. 82 lines, 2 over the 80-line cap.
@@ -126,6 +129,17 @@ func (a *application) Run(ctx context.Context, _ libsentry.Client) error {
 	triggerHandler := factory.CreateTriggerReleaseCheckHandler(triggerReleaseCheckSender)
 	a.TriggerHandler = libhttp.NewJSONErrorHandler(triggerHandler)
 
+	// Webhook receiver reuses the same sender: every signature-verified push
+	// delivery publishes a TriggerReleaseCheckCommand, so the in-pod consumer
+	// (fetch → filter → release-check → CreateTaskCommand) applies unchanged.
+	webhookHandler := factory.CreateWebhookHandler(
+		triggerReleaseCheckSender,
+		a.WebhookSecret,
+		metrics,
+		libtime.NewCurrentDateTime(),
+	)
+	a.WebhookHandler = libhttp.NewJSONErrorHandler(webhookHandler)
+
 	// In-pod command consumer: third run.Func alongside poll + HTTP.
 	// session-scoped offset store — replays the request topic from OffsetOldest
 	// on pod restart; safe because the downstream CreateTaskCommand is idempotent
@@ -172,6 +186,7 @@ func (a *application) createHTTPServer() run.Func {
 		router.Path("/readiness").Handler(libhttp.NewPrintHandler("OK"))
 		router.Path("/metrics").Handler(promhttp.Handler())
 		router.Path("/trigger").Handler(a.TriggerHandler)
+		router.Path("/webhook/github-release").Handler(a.WebhookHandler)
 		router.Path("/resetcursor/{repo:.+}").
 			Handler(libhttp.NewDangerousHandlerWrapper(pkg.NewResetCursorHandler(a.CursorPath)))
 		router.Path("/setcursor/{repo:.+}").

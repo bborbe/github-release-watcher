@@ -22,6 +22,16 @@ type Metrics interface {
 
 	// IncFilterSkipped — reason: "empty_unreleased" | "auto_release" | "sha_unchanged" | "scope" | "fork"
 	IncFilterSkipped(reason string)
+
+	// IncWebhookDelivery increments the webhook delivery counter with the given result label.
+	// result: "success", "skip"
+	IncWebhookDelivery(result string)
+
+	// IncWebhookSignatureRejected increments the webhook signature-rejection counter.
+	IncWebhookSignatureRejected()
+
+	// ObserveWebhookDispatchLatency records the dispatch latency of a webhook delivery.
+	ObserveWebhookDispatchLatency(seconds float64)
 }
 
 const metricNamespace = "github_release_watcher"
@@ -55,12 +65,31 @@ func NewMetrics(registerer prometheus.Registerer) Metrics {
 			Name:      "filter_skipped_total",
 			Help:      "Total releases filtered out by reason.",
 		}, []string{"reason"}),
+		webhookDeliveriesTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Namespace: metricNamespace,
+			Name:      "webhook_deliveries_total",
+			Help:      "Total GitHub webhook deliveries by result.",
+		}, []string{"result"}),
+		webhookSignatureRejectionsTotal: prometheus.NewCounter(prometheus.CounterOpts{
+			Namespace: metricNamespace,
+			Name:      "webhook_signature_rejections_total",
+			Help:      "Total GitHub webhook payloads rejected for an invalid HMAC signature.",
+		}),
+		webhookDispatchLatencySeconds: prometheus.NewHistogram(prometheus.HistogramOpts{
+			Namespace: metricNamespace,
+			Name:      "webhook_dispatch_latency_seconds",
+			Help:      "Latency of dispatching a GitHub webhook delivery to Kafka.",
+			Buckets:   prometheus.DefBuckets,
+		}),
 	}
 	registerer.MustRegister(
 		m.pollCycleTotal,
 		m.publishedTotal,
 		m.reposScannedTotal,
 		m.filterSkippedTotal,
+		m.webhookDeliveriesTotal,
+		m.webhookSignatureRejectionsTotal,
+		m.webhookDispatchLatencySeconds,
 	)
 	for _, r := range []string{"success", "rate_limited", "github_error"} {
 		m.pollCycleTotal.WithLabelValues(r).Add(0)
@@ -71,6 +100,9 @@ func NewMetrics(registerer prometheus.Registerer) Metrics {
 	for _, r := range []string{"empty_unreleased", "auto_release", "sha_unchanged", "scope", "fork"} {
 		m.filterSkippedTotal.WithLabelValues(r).Add(0)
 	}
+	for _, r := range []string{"success", "skip"} {
+		m.webhookDeliveriesTotal.WithLabelValues(r).Add(0)
+	}
 	return m
 }
 
@@ -79,6 +111,10 @@ type prometheusMetrics struct {
 	publishedTotal     *prometheus.CounterVec
 	reposScannedTotal  prometheus.Counter
 	filterSkippedTotal *prometheus.CounterVec
+
+	webhookDeliveriesTotal          *prometheus.CounterVec
+	webhookSignatureRejectionsTotal prometheus.Counter
+	webhookDispatchLatencySeconds   prometheus.Histogram
 }
 
 func (m *prometheusMetrics) IncPollCycle(result string) {
@@ -95,4 +131,16 @@ func (m *prometheusMetrics) IncReposScanned(n int) {
 
 func (m *prometheusMetrics) IncFilterSkipped(reason string) {
 	m.filterSkippedTotal.WithLabelValues(reason).Inc()
+}
+
+func (m *prometheusMetrics) IncWebhookDelivery(result string) {
+	m.webhookDeliveriesTotal.WithLabelValues(result).Inc()
+}
+
+func (m *prometheusMetrics) IncWebhookSignatureRejected() {
+	m.webhookSignatureRejectionsTotal.Inc()
+}
+
+func (m *prometheusMetrics) ObserveWebhookDispatchLatency(seconds float64) {
+	m.webhookDispatchLatencySeconds.Observe(seconds)
 }
