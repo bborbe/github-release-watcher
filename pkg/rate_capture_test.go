@@ -18,6 +18,8 @@ var _ = Describe("rateCapturingTransport", func() {
 	It("captures X-RateLimit-Remaining from each response", func() {
 		var captured int
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			// Both calls are void in net/http; the header value is asserted below
+			// via the captured gauge value.
 			w.Header().Set("X-RateLimit-Remaining", "7342")
 			w.WriteHeader(http.StatusOK)
 		}))
@@ -42,6 +44,7 @@ var _ = Describe("rateCapturingTransport edge cases", func() {
 	It("captures the header even on a non-2xx response", func() {
 		var captured int
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			// Both calls are void in net/http; the 403 status is asserted below.
 			w.Header().Set("X-RateLimit-Remaining", "0")
 			http.Error(w, "rate limited", http.StatusForbidden)
 		}))
