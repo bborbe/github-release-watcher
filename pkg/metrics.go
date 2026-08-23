@@ -32,6 +32,10 @@ type Metrics interface {
 
 	// ObserveWebhookDispatchLatency records the dispatch latency of a webhook delivery.
 	ObserveWebhookDispatchLatency(seconds float64)
+
+	// IncWebhookSkipped increments the webhook skip counter.
+	// reason: "no_release_files" | "debounced"
+	IncWebhookSkipped(reason string)
 }
 
 const metricNamespace = "github_release_watcher"
@@ -81,6 +85,11 @@ func NewMetrics(registerer prometheus.Registerer) Metrics {
 			Help:      "Latency of dispatching a GitHub webhook delivery to Kafka.",
 			Buckets:   prometheus.DefBuckets,
 		}),
+		webhookSkippedTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Namespace: metricNamespace,
+			Name:      "webhook_skipped_total",
+			Help:      "Total GitHub webhook push deliveries skipped by reason.",
+		}, []string{"reason"}),
 	}
 	registerer.MustRegister(
 		m.pollCycleTotal,
@@ -90,6 +99,7 @@ func NewMetrics(registerer prometheus.Registerer) Metrics {
 		m.webhookDeliveriesTotal,
 		m.webhookSignatureRejectionsTotal,
 		m.webhookDispatchLatencySeconds,
+		m.webhookSkippedTotal,
 	)
 	for _, r := range []string{"success", "rate_limited", "github_error"} {
 		m.pollCycleTotal.WithLabelValues(r).Add(0)
@@ -103,6 +113,9 @@ func NewMetrics(registerer prometheus.Registerer) Metrics {
 	for _, r := range []string{"success", "skip"} {
 		m.webhookDeliveriesTotal.WithLabelValues(r).Add(0)
 	}
+	for _, r := range []string{"no_release_files", "debounced"} {
+		m.webhookSkippedTotal.WithLabelValues(r).Add(0)
+	}
 	return m
 }
 
@@ -115,6 +128,7 @@ type prometheusMetrics struct {
 	webhookDeliveriesTotal          *prometheus.CounterVec
 	webhookSignatureRejectionsTotal prometheus.Counter
 	webhookDispatchLatencySeconds   prometheus.Histogram
+	webhookSkippedTotal             *prometheus.CounterVec
 }
 
 func (m *prometheusMetrics) IncPollCycle(result string) {
@@ -139,6 +153,10 @@ func (m *prometheusMetrics) IncWebhookDelivery(result string) {
 
 func (m *prometheusMetrics) IncWebhookSignatureRejected() {
 	m.webhookSignatureRejectionsTotal.Inc()
+}
+
+func (m *prometheusMetrics) IncWebhookSkipped(reason string) {
+	m.webhookSkippedTotal.WithLabelValues(reason).Inc()
 }
 
 func (m *prometheusMetrics) ObserveWebhookDispatchLatency(seconds float64) {

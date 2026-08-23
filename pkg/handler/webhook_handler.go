@@ -15,6 +15,7 @@ import (
 	"strings"
 
 	"github.com/bborbe/errors"
+	"github.com/bborbe/github-release-watcher/pkg"
 	"github.com/bborbe/github-release-watcher/pkg/command"
 	libhttp "github.com/bborbe/http"
 	libtime "github.com/bborbe/time"
@@ -42,6 +43,9 @@ type WebhookMetrics interface {
 	IncWebhookDelivery(result string)
 	IncWebhookSignatureRejected()
 	ObserveWebhookDispatchLatency(seconds float64)
+	// IncWebhookSkipped counts push deliveries that did not publish a
+	// release-check. reason: "no_release_files" | "debounced".
+	IncWebhookSkipped(reason string)
 }
 
 // WebhookHandler handles POST /webhook/github-release.
@@ -54,26 +58,31 @@ type WebhookMetrics interface {
 type WebhookHandler = libhttp.WithError
 
 // NewWebhookHandler returns a handler that publishes a TriggerReleaseCheckCommand
-// for each signature-verified push webhook delivery.
+// for each signature-verified push webhook delivery that (a) touches a
+// release-relevant file (CHANGELOG.md / .maintainer.yaml) and (b) passes the
+// per-repo debounce. All other pushes are acked and skipped.
 func NewWebhookHandler(
 	sender command.TriggerReleaseCheckCommandSender,
 	secret string,
 	metrics WebhookMetrics,
 	clock libtime.CurrentDateTimeGetter,
+	debouncer pkg.Debouncer,
 ) WebhookHandler {
 	return &webhookHandler{
-		sender:  sender,
-		secret:  secret,
-		metrics: metrics,
-		clock:   clock,
+		sender:    sender,
+		secret:    secret,
+		metrics:   metrics,
+		clock:     clock,
+		debouncer: debouncer,
 	}
 }
 
 type webhookHandler struct {
-	sender  command.TriggerReleaseCheckCommandSender
-	secret  string
-	metrics WebhookMetrics
-	clock   libtime.CurrentDateTimeGetter
+	sender    command.TriggerReleaseCheckCommandSender
+	secret    string
+	metrics   WebhookMetrics
+	clock     libtime.CurrentDateTimeGetter
+	debouncer pkg.Debouncer
 }
 
 func (h *webhookHandler) ServeHTTP(
@@ -122,10 +131,35 @@ func (h *webhookHandler) ServeHTTP(
 		)
 	}
 
-	// A push to any branch is dispatched; the in-pod filter chain decides
-	// whether the repo is eligible (allowlist, empty-unreleased, SHA-unchanged).
-	// Dispatch only the repo-scoped payload — the executor's Poll derives the
-	// per-repo check from the default branch, mirroring the 10-min poll loop.
+	// Only pushes that touch a release-relevant file can change the release
+	// state (CHANGELOG.md bullets / .maintainer.yaml autoRelease). Anything
+	// else is acked and skipped — a repo whose autocommit daemon pushes
+	// obsidian-openclaw-style every few seconds but never touches these files
+	// now emits ZERO release-checks (the storm that exhausted the rate limit).
+	if !touchesReleaseFiles(payload) {
+		h.metrics.IncWebhookSkipped("no_release_files")
+		glog.V(2).Infof(
+			"webhook skipped repo=%s reason=no-release-files",
+			payload.Repository.FullName,
+		)
+		return writeWebhookAck(resp)
+	}
+
+	// Per-repo debounce: a burst of release-relevant pushes within the min
+	// interval collapses to one dispatch (the first check reads the latest
+	// state, so later pushes in the burst are covered).
+	if !h.debouncer.Allow(payload.Repository.FullName) {
+		h.metrics.IncWebhookSkipped("debounced")
+		glog.V(2).Infof(
+			"webhook skipped repo=%s reason=debounced",
+			payload.Repository.FullName,
+		)
+		return writeWebhookAck(resp)
+	}
+
+	// Dispatch the repo-scoped payload — the executor's Poll now narrows the
+	// scan to this single repo (scoped poll), so one push costs ~3 API calls,
+	// not a full fleet scan.
 	if err := h.sender.SendCommand(ctx, command.TriggerReleaseCheckCommand{
 		Scope: payload.Repository.FullName,
 	}); err != nil {
@@ -146,12 +180,43 @@ func (h *webhookHandler) ServeHTTP(
 }
 
 // webhookPushEvent is the subset of a GitHub push event the handler reads:
-// the ref (branch/tag) plus the repository's full name.
+// the ref (branch/tag), the repository's full name, and each commit's
+// modified/added file lists (used to detect release-relevant pushes).
 type webhookPushEvent struct {
 	Ref        string `json:"ref"`
 	Repository struct {
 		FullName string `json:"full_name"`
 	} `json:"repository"`
+	Commits []struct {
+		Modified []string `json:"modified"`
+		Added    []string `json:"added"`
+	} `json:"commits"`
+}
+
+// releaseFiles are the files whose modification can change a repo's release
+// state: CHANGELOG.md bullets and the .maintainer.yaml autoRelease opt-in.
+var releaseFiles = map[string]struct{}{
+	"CHANGELOG.md":     {},
+	".maintainer.yaml": {},
+}
+
+// touchesReleaseFiles reports whether any commit in the push touched a
+// release-relevant file. A push whose commits carry no such file cannot have
+// changed the release state, so the webhook path needs no release-check for it.
+func touchesReleaseFiles(p webhookPushEvent) bool {
+	for _, commit := range p.Commits {
+		for _, f := range commit.Modified {
+			if _, ok := releaseFiles[f]; ok {
+				return true
+			}
+		}
+		for _, f := range commit.Added {
+			if _, ok := releaseFiles[f]; ok {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // verifyWebhookSignature checks the X-Hub-Signature-256 header ("sha256=<hex>")

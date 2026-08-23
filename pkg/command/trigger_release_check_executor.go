@@ -17,8 +17,9 @@ import (
 
 // NewTriggerReleaseCheckCommandExecutor creates a cdb.CommandObjectExecutorTx that
 // consumes TriggerReleaseCheckCommand messages and drives the github-release
-// watcher: unmarshal → validate → invoke w.Poll(ctx, cmd.Force) on the shared
-// watcher instance.
+// watcher: unmarshal → validate → invoke w.Poll(ctx, cmd.Force, cmd.Scope) on
+// the shared watcher instance. cmd.Scope narrows the poll to one repo when the
+// command came from a webhook push (empty scope = full fleet scan).
 //
 // Exit-path mapping (per spec 067 § Desired Behavior 4):
 //   - malformed payload (MarshalInto fails)    → cdb.ErrCommandObjectSkipped
@@ -68,7 +69,7 @@ func runTriggerReleaseCheck(
 	if err != nil {
 		return nil, nil, err
 	}
-	if err := watcher.Poll(ctx, cmd.Force); err != nil {
+	if err := watcher.Poll(ctx, cmd.Force, cmd.Scope); err != nil {
 		// Transient: rate-limited, GitHub 5xx, cursor read error, etc.
 		// Framework emits Failure on the result topic, Kafka redelivers.
 		// The Watcher already logged per-cycle state; we just propagate.

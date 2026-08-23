@@ -158,8 +158,9 @@ var _ = Describe("executor force flag plumbing (spec 071)", func() {
 		Expect(err).NotTo(HaveOccurred())
 
 		Expect(watcher.PollCallCount()).To(Equal(1))
-		_, skip := watcher.PollArgsForCall(0)
+		_, skip, scope := watcher.PollArgsForCall(0)
 		Expect(skip).To(BeTrue())
+		Expect(scope).To(BeEmpty())
 	})
 
 	It("force=false ⇒ Poll(ctx, false)", func() {
@@ -170,8 +171,9 @@ var _ = Describe("executor force flag plumbing (spec 071)", func() {
 		Expect(err).NotTo(HaveOccurred())
 
 		Expect(watcher.PollCallCount()).To(Equal(1))
-		_, skip := watcher.PollArgsForCall(0)
+		_, skip, scope := watcher.PollArgsForCall(0)
 		Expect(skip).To(BeFalse())
+		Expect(scope).To(BeEmpty())
 	})
 
 	// The error-wrap message and the success log line share the same
@@ -225,7 +227,7 @@ var _ = Describe("executor crash recovery (spec 067 AC 19)", func() {
 		// context-cancelled error — same shape as a real watcher that
 		// gets SIGKILL'd in mid-Poll.
 		killedCtx, cancel := context.WithCancel(ctx)
-		watcher.PollStub = func(c context.Context, _ bool) error {
+		watcher.PollStub = func(c context.Context, _ bool, _ string) error {
 			// Cancel mid-call, then return the context error like a real Watcher would.
 			cancel()
 			return c.Err()

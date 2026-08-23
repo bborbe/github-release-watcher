@@ -8,6 +8,7 @@ package factory
 import (
 	"context"
 	"net/http"
+	"time"
 
 	task "github.com/bborbe/agent/command/task"
 	"github.com/bborbe/cqrs/base"
@@ -118,15 +119,23 @@ func CreateTriggerReleaseCheckHandler(
 
 // CreateWebhookHandler wires the thin webhook receiver that publishes a
 // TriggerReleaseCheckCommand to Kafka for each signature-verified push
-// delivery on /webhook/github-release. Filter/trust work stays in the in-pod
+// delivery on /webhook/github-release that touches a release-relevant file
+// and passes the per-repo debounce. Filter/trust work stays in the in-pod
 // command consumer (shared with /trigger).
 func CreateWebhookHandler(
 	sender command.TriggerReleaseCheckCommandSender,
 	secret string,
 	metrics handler.WebhookMetrics,
 	clock libtime.CurrentDateTimeGetter,
+	minInterval time.Duration,
 ) handler.WebhookHandler {
-	return handler.NewWebhookHandler(sender, secret, metrics, clock)
+	return handler.NewWebhookHandler(
+		sender,
+		secret,
+		metrics,
+		clock,
+		pkg.NewDebouncer(minInterval, clock),
+	)
 }
 
 // CreateCommandConsumer wires a run.Func that consumes TriggerReleaseCheckCommand

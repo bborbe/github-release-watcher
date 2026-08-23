@@ -183,7 +183,7 @@ var _ = Describe("TriggerHandler", func() {
 // the handler has no indirect reference path to a Watcher.
 type panickingWatcher struct{}
 
-func (p *panickingWatcher) Poll(_ context.Context, _ bool) error {
+func (p *panickingWatcher) Poll(_ context.Context, _ bool, _ string) error {
 	panic("panickingWatcher: handler should never reach me")
 }
 

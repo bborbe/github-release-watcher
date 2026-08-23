@@ -12,9 +12,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"time"
 
 	"github.com/bborbe/errors"
 	"github.com/bborbe/github-release-watcher/mocks"
+	"github.com/bborbe/github-release-watcher/pkg"
 	"github.com/bborbe/github-release-watcher/pkg/handler"
 	libhttp "github.com/bborbe/http"
 	libtime "github.com/bborbe/time"
@@ -49,6 +51,7 @@ var _ = Describe("WebhookHandler", func() {
 				webhookTestSecret,
 				metrics,
 				libtime.NewCurrentDateTime(),
+				pkg.NewDebouncer(time.Second, libtime.NewCurrentDateTime()),
 			),
 		)
 	})
@@ -62,8 +65,16 @@ var _ = Describe("WebhookHandler", func() {
 		return req
 	}
 
+	// pushPayload builds a push event whose commit touches CHANGELOG.md (the
+	// release-relevant case that must dispatch).
 	pushPayload := func(repo string) string {
-		return `{"ref":"refs/heads/master","repository":{"full_name":"` + repo + `"}}`
+		return `{"ref":"refs/heads/master","repository":{"full_name":"` + repo + `"},"commits":[{"modified":["CHANGELOG.md"]}]}`
+	}
+
+	// pushPayloadNoReleaseFiles builds a push whose commit touches only a
+	// non-release file — must be skipped.
+	pushPayloadNoReleaseFiles := func(repo string) string {
+		return `{"ref":"refs/heads/master","repository":{"full_name":"` + repo + `"},"commits":[{"modified":["README.md"]}]}`
 	}
 
 	Context("signature verification", func() {
@@ -110,7 +121,13 @@ var _ = Describe("WebhookHandler", func() {
 
 		It("rejects everything when the secret is not configured (fail closed)", func() {
 			closed := libhttp.NewErrorHandler(
-				handler.NewWebhookHandler(sender, "", metrics, libtime.NewCurrentDateTime()),
+				handler.NewWebhookHandler(
+					sender,
+					"",
+					metrics,
+					libtime.NewCurrentDateTime(),
+					pkg.NewDebouncer(time.Second, libtime.NewCurrentDateTime()),
+				),
 			)
 			req := webhookRequest("push", pushPayload("bborbe/repo"))
 			resp := httptest.NewRecorder()
@@ -183,6 +200,46 @@ var _ = Describe("WebhookHandler", func() {
 
 			Expect(resp.Code).To(Equal(http.StatusBadGateway))
 			Expect(sender.SendCommandCallCount()).To(Equal(1))
+		})
+
+		It("skips a push that touches no release-relevant file (200, no publish)", func() {
+			req := webhookRequest("push", pushPayloadNoReleaseFiles("bborbe/obsidian-openclaw"))
+			resp := httptest.NewRecorder()
+			h.ServeHTTP(resp, req)
+
+			Expect(resp.Code).To(Equal(http.StatusOK))
+			Expect(sender.SendCommandCallCount()).To(Equal(0))
+			Expect(metrics.IncWebhookSkippedCallCount()).To(Equal(1))
+			Expect(metrics.IncWebhookSkippedArgsForCall(0)).To(Equal("no_release_files"))
+		})
+
+		It("dispatches a push that touches .maintainer.yaml", func() {
+			payload := `{"ref":"refs/heads/master","repository":{"full_name":"bborbe/repo"},"commits":[{"modified":[".maintainer.yaml"]}]}`
+			req := webhookRequest("push", payload)
+			resp := httptest.NewRecorder()
+			h.ServeHTTP(resp, req)
+
+			Expect(resp.Code).To(Equal(http.StatusAccepted))
+			Expect(sender.SendCommandCallCount()).To(Equal(1))
+			_, sentCmd := sender.SendCommandArgsForCall(0)
+			Expect(sentCmd.Scope).To(Equal("bborbe/repo"))
+		})
+
+		It("debounces a second release-relevant push within the min interval", func() {
+			h.ServeHTTP(
+				&httptest.ResponseRecorder{},
+				webhookRequest("push", pushPayload("bborbe/repo")),
+			)
+			Expect(sender.SendCommandCallCount()).To(Equal(1))
+
+			h.ServeHTTP(
+				&httptest.ResponseRecorder{},
+				webhookRequest("push", pushPayload("bborbe/repo")),
+			)
+
+			Expect(sender.SendCommandCallCount()).To(Equal(1))
+			Expect(metrics.IncWebhookSkippedCallCount()).To(Equal(1))
+			Expect(metrics.IncWebhookSkippedArgsForCall(0)).To(Equal("debounced"))
 		})
 	})
 })
