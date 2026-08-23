@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## v0.4.3
 
 - fix: debounce + scope webhook-triggered release-checks — the `/webhook/github-release` handler now dispatches only pushes that touch `CHANGELOG.md` / `.maintainer.yaml`, per-repo debounced (`WEBHOOK_MIN_INTERVAL`, default 1m), and the executor scopes the poll to the pushed repo (`cmd.Scope`); kills the full-fleet scan per push that exhausted the shared App token's 12,500/hr rate limit and stalled all bot reviews (2026-08-23)
 
