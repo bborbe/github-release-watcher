@@ -89,6 +89,11 @@ func (w *watcher) Poll(ctx context.Context, skipSHAUnchanged bool, scope string)
 	if err != nil {
 		return errors.Wrapf(ctx, err, "load cursor path=%s", w.cursorPath)
 	}
+	// Publish the shared-token remaining quota on every exit path (success,
+	// rate-limited abort, github-error abort) so the rate_limit_remaining
+	// gauge tracks the last API response's X-RateLimit-Remaining — the alert
+	// surface for quota exhaustion before the fleet-wide 403 stall.
+	defer w.metrics.SetRateLimitRemaining(w.ghClient.RateLimitRemaining())
 
 	repos, ok := w.resolveRepos(ctx, scope)
 	if !ok {
