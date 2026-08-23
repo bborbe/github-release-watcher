@@ -7,6 +7,7 @@ package pkg
 import (
 	"context"
 	stderrors "errors"
+	"strings"
 
 	"github.com/bborbe/errors"
 	"github.com/bborbe/github-release-watcher/pkg/filter"
@@ -28,7 +29,7 @@ type Watcher interface {
 	// every repo is reconsidered even when the cursor already matches —
 	// every other filter (allowlist, empty-unreleased, auto-release)
 	// still runs.
-	Poll(ctx context.Context, skipSHAUnchanged bool) error
+	Poll(ctx context.Context, skipSHAUnchanged bool, scope string) error
 }
 
 // NewWatcher wires the watcher's collaborators.
@@ -66,9 +67,14 @@ type watcher struct {
 
 // Poll implements Watcher. When skipSHAUnchanged is true the cycle filter
 // chain omits SHAUnchangedFilter; every other filter is unaffected (spec 071).
+// When scope is non-empty ("owner/repo"), only that repo is scanned — the
+// webhook-triggered release-check path — skipping the full ListRepos walk so a
+// single push costs ~3 API calls, not one full-fleet scan. Empty scope runs
+// the canonical full cycle.
 // One cycle:
 //  1. Load cursor (cold-start safe)
 //  2. ListRepos(owner) — abort cycle on rate_limited / github_error (no cursor save)
+//     (skipped when scope != "")
 //  3. For each repo (sequential):
 //     a. GetMasterSHA — abort cycle on rate_limited; prune on transient error
 //     b. GetChangelogContent → ParseChangelog → ChangelogSummary
@@ -78,21 +84,14 @@ type watcher struct {
 //     f. publisher.PublishCreate(release) — update cursor on true return
 //  4. SaveCursor (skip on abort)
 //  5. IncPollCycle("success")
-func (w *watcher) Poll(ctx context.Context, skipSHAUnchanged bool) error {
+func (w *watcher) Poll(ctx context.Context, skipSHAUnchanged bool, scope string) error {
 	cursorState, err := LoadCursor(ctx, w.cursorPath)
 	if err != nil {
 		return errors.Wrapf(ctx, err, "load cursor path=%s", w.cursorPath)
 	}
 
-	repos, err := w.ghClient.ListRepos(ctx, w.owner)
-	if err != nil {
-		if stderrors.Is(err, ErrRateLimited) {
-			w.metrics.IncPollCycle("rate_limited")
-			glog.Warningf("poll cycle aborted: rate limited during ListRepos owner=%s", w.owner)
-			return nil
-		}
-		w.metrics.IncPollCycle("github_error")
-		glog.Warningf("poll cycle aborted: ListRepos owner=%s err=%v", w.owner, err)
+	repos, ok := w.resolveRepos(ctx, scope)
+	if !ok {
 		return nil
 	}
 	w.metrics.IncReposScanned(len(repos))
@@ -188,6 +187,54 @@ func (w *watcher) processRepos(
 		}
 	}
 	return ""
+}
+
+// resolveRepos returns the repos to scan this cycle: the full fleet for an
+// empty scope, or the single repo named by a non-empty scope (the webhook
+// path). Returns ok=false when the cycle should end without saving the cursor:
+// a rate-limit / GitHub error during ListRepos, or a scope outside the
+// watcher's owner (defensive — the webhook only delivers for installed repos).
+func (w *watcher) resolveRepos(ctx context.Context, scope string) ([]Repo, bool) {
+	if scope != "" {
+		return w.resolveScopedRepo(scope)
+	}
+	return w.resolveFleetRepos(ctx)
+}
+
+// resolveScopedRepo builds the single Repo named by a webhook scope.
+func (w *watcher) resolveScopedRepo(scope string) ([]Repo, bool) {
+	repo, ok := scopeRepo(scope, w.owner)
+	if !ok {
+		glog.V(2).Infof("poll cycle scope=%q outside owner=%s — no-op", scope, w.owner)
+		return nil, false
+	}
+	return []Repo{repo}, true
+}
+
+// resolveFleetRepos lists the full fleet for a periodic /trigger poll cycle.
+func (w *watcher) resolveFleetRepos(ctx context.Context) ([]Repo, bool) {
+	repos, err := w.ghClient.ListRepos(ctx, w.owner)
+	if err != nil {
+		if stderrors.Is(err, ErrRateLimited) {
+			w.metrics.IncPollCycle("rate_limited")
+			glog.Warningf("poll cycle aborted: rate limited during ListRepos owner=%s", w.owner)
+		} else {
+			w.metrics.IncPollCycle("github_error")
+			glog.Warningf("poll cycle aborted: ListRepos owner=%s err=%v", w.owner, err)
+		}
+		return nil, false
+	}
+	return repos, true
+}
+
+// scopeRepo parses a "owner/name" scope into a Repo, returning false when the
+// owner does not match the watcher's owner (out of scope for this instance).
+func scopeRepo(scope, owner string) (Repo, bool) {
+	parts := strings.Split(scope, "/")
+	if len(parts) != 2 || parts[0] != owner || parts[1] == "" {
+		return Repo{}, false
+	}
+	return Repo{Owner: parts[0], Name: parts[1]}, true
 }
 
 // gatherRelease fetches HeadSHA, ChangelogContent, MaintainerConfig for one repo.

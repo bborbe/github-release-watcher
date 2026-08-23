@@ -64,9 +64,10 @@ type application struct {
 	// purposes. Empty means unprefixed topics.
 	TopicPrefix base.TopicPrefix `required:"false" arg:"topic-prefix" env:"TOPIC_PREFIX" usage:"Kafka topic prefix for CQRS topic construction"`
 
-	WebhookSecret  string `required:"false" arg:"webhook-secret" env:"WEBHOOK_SECRET" usage:"GitHub webhook secret for HMAC verification of /webhook/github-release" display:"length"`
-	TriggerHandler http.Handler
-	WebhookHandler http.Handler
+	WebhookSecret      string `required:"false" arg:"webhook-secret"       env:"WEBHOOK_SECRET"       usage:"GitHub webhook secret for HMAC verification of /webhook/github-release"                 display:"length"`
+	WebhookMinInterval string `required:"false" arg:"webhook-min-interval" env:"WEBHOOK_MIN_INTERVAL" usage:"Min interval between webhook-triggered release-checks per repo (collapses push storms)"                  default:"1m"`
+	TriggerHandler     http.Handler
+	WebhookHandler     http.Handler
 }
 
 //nolint:funlen // wires Run from validated config — extracting any chunk hurts readability without reducing complexity. 82 lines, 2 over the 80-line cap.
@@ -74,6 +75,10 @@ func (a *application) Run(ctx context.Context, _ libsentry.Client) error {
 	pollInterval, err := time.ParseDuration(a.PollInterval)
 	if err != nil {
 		return errors.Wrapf(ctx, err, "parse poll interval %q", a.PollInterval)
+	}
+	webhookMinInterval, err := time.ParseDuration(a.WebhookMinInterval)
+	if err != nil {
+		return errors.Wrapf(ctx, err, "parse webhook min interval %q", a.WebhookMinInterval)
 	}
 
 	allowlist := filter.ParseRepoAllowlist(a.RepoAllowlist)
@@ -137,6 +142,7 @@ func (a *application) Run(ctx context.Context, _ libsentry.Client) error {
 		a.WebhookSecret,
 		metrics,
 		libtime.NewCurrentDateTime(),
+		webhookMinInterval,
 	)
 	a.WebhookHandler = libhttp.NewJSONErrorHandler(webhookHandler)
 
@@ -163,8 +169,8 @@ func (a *application) Run(ctx context.Context, _ libsentry.Client) error {
 		glog.V(2).Infof("poll cycle start stage=%s", a.Stage)
 		// skipSHAUnchanged=false: the interval-driven loop is the canonical
 		// dedup-engaged path. force=true comes exclusively from the HTTP
-		// /trigger handler's command publish (spec 071).
-		return w.Poll(ctx, false)
+		// /trigger handler's command publish (spec 071). scope="" = full scan.
+		return w.Poll(ctx, false, "")
 	}
 
 	// Order: poll → HTTP → command consumer (spec 067 AC 9: three run.Funcs).

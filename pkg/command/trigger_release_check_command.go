@@ -16,14 +16,16 @@ const TriggerReleaseCheckCommandOperation base.CommandOperation = "trigger-relea
 
 // TriggerReleaseCheckCommand is the payload for TriggerReleaseCheckCommandOperation.
 // It is published to the github-release watcher's request topic by the /trigger
-// HTTP handler and consumed by the in-pod command consumer.
+// HTTP handler (empty Scope) or the /webhook/github-release push handler
+// (Scope = "owner/repo"), and consumed by the in-pod command consumer.
 //
-// Scope is reserved for a future per-repo filter UX; the executor still
-// ignores it. Force is wired (spec 071): when true, the consuming executor
-// invokes Watcher.Poll with skipSHAUnchanged=true so the cycle's filter
-// chain omits SHAUnchangedFilter — repos whose head SHA matches the
-// cursor are reconsidered exactly once for that cycle. Every other filter
-// (allowlist, empty-unreleased, auto-release) still runs.
+// Scope narrows the poll to a single repo (the webhook path) so a push costs
+// ~3 API calls instead of a full fleet scan; empty Scope runs the full cycle.
+// Force is wired (spec 071): when true, the consuming executor invokes
+// Watcher.Poll with skipSHAUnchanged=true so the cycle's filter chain omits
+// SHAUnchangedFilter — repos whose head SHA matches the cursor are
+// reconsidered exactly once for that cycle. Every other filter (allowlist,
+// empty-unreleased, auto-release) still runs.
 type TriggerReleaseCheckCommand struct {
 	Scope string `json:"scope,omitempty"`
 	Force bool   `json:"force,omitempty"`
@@ -31,8 +33,8 @@ type TriggerReleaseCheckCommand struct {
 
 // Validate enforces the command's schema rules. The empty payload {} is
 // still accepted: Force defaults to false (engages SHAUnchangedFilter, the
-// canonical poll-loop behaviour), and Scope remains reserved-unread. A
-// future spec will add per-repo or per-stage validation here.
+// canonical poll-loop behaviour), and Scope may be empty (full scan) or
+// "owner/repo" (webhook-triggered single-repo scan).
 func (cmd TriggerReleaseCheckCommand) Validate(_ context.Context) error {
 	return nil
 }
