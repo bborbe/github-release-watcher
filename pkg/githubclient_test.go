@@ -203,10 +203,10 @@ var _ = Describe("pkg.GitHubClient", func() {
 					http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 						requestPaths = append(requestPaths, r.URL.Path)
 						w.Header().Set("Content-Type", "application/json")
-						switch {
-						case r.URL.Path == "/repos/x/y":
+						switch r.URL.Path {
+						case "/repos/x/y":
 							fmt.Fprint(w, `{"default_branch":"master"}`)
-						case r.URL.Path == "/repos/x/y/branches/master":
+						case "/repos/x/y/branches/master":
 							fmt.Fprint(w, `{"commit":{"sha":"abc123"}}`)
 						default:
 							w.WriteHeader(http.StatusNotFound)
