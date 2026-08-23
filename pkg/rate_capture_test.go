@@ -36,3 +36,26 @@ var _ = Describe("rateCapturingTransport", func() {
 		Expect(strconv.Itoa(captured)).To(Equal("7342"))
 	})
 })
+
+var _ = Describe("rateCapturingTransport edge cases", func() {
+	It("captures the header even on a non-2xx response", func() {
+		var captured int
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("X-RateLimit-Remaining", "0")
+			http.Error(w, "rate limited", http.StatusForbidden)
+		}))
+		defer srv.Close()
+
+		tr := &rateCapturingTransport{
+			inner: srv.Client().Transport,
+			set:   func(n int) { captured = n },
+		}
+		req, err := http.NewRequest("GET", srv.URL, nil)
+		Expect(err).NotTo(HaveOccurred())
+		resp, err := tr.RoundTrip(req)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(resp.StatusCode).To(Equal(http.StatusForbidden))
+
+		Expect(captured).To(Equal(0))
+	})
+})
