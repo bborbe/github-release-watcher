@@ -17,7 +17,9 @@ import (
 type Debouncer interface {
 	// Allow reports whether a trigger for key is permitted now. Returns false
 	// (deny) when a previous trigger for the same key happened less than the
-	// configured interval ago; records the trigger time on approval.
+	// configured interval ago; records the trigger time on approval. The
+	// caller records the deny reason for traceability (the webhook handler
+	// increments webhook_skipped_total{reason="debounced"}).
 	Allow(key string) bool
 }
 
