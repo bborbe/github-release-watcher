@@ -250,6 +250,24 @@ func (c *githubClient) wrapRateLimitErr(
 
 func (c *githubClient) GetMasterSHA(ctx context.Context, repo Repo) (string, error) {
 	if repo.DefaultBranch == "" {
+		// Scoped-poll path (webhook release-check): the Repo is built from the
+		// scope alone, so DefaultBranch is unknown — resolve it once before
+		// fetching the branch SHA. Without this the scoped check drops every
+		// repo and the webhook-triggered release never fires (the periodic
+		// scan was the only working path).
+		ghRepo, _, err := c.client.Repositories.Get(ctx, repo.Owner, repo.Name)
+		if err != nil {
+			return "", c.wrapRateLimitErr(
+				ctx,
+				err,
+				"get repo %s/%s for default branch",
+				repo.Owner,
+				repo.Name,
+			)
+		}
+		repo.DefaultBranch = ghRepo.GetDefaultBranch()
+	}
+	if repo.DefaultBranch == "" {
 		return "", errors.Errorf(
 			ctx,
 			"repo %s/%s has empty DefaultBranch — cannot fetch HEAD SHA",
