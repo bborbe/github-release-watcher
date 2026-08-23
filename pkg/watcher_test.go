@@ -683,3 +683,44 @@ var _ = Describe("pkg.Watcher.Poll with scope (webhook path)", func() {
 		Expect(publisher.PublishCreateCallCount()).To(Equal(0))
 	})
 })
+
+var _ = Describe("pkg.Watcher.Poll publishes the rate-limit gauge", func() {
+	var (
+		ctx           context.Context
+		ghClient      *mocks.GitHubClient
+		publisher     *mocks.TaskPublisher
+		metrics       *mocks.Metrics
+		cursorPath    string
+		tmpDir        string
+		staticFilters filter.TaskCreationFilter
+	)
+
+	BeforeEach(func() {
+		ctx = context.Background()
+		var err error
+		tmpDir, err = os.MkdirTemp("", "watcher-poll-rl-*")
+		Expect(err).NotTo(HaveOccurred())
+		cursorPath = filepath.Join(tmpDir, "cursor.json")
+		ghClient = &mocks.GitHubClient{}
+		publisher = &mocks.TaskPublisher{}
+		metrics = &mocks.Metrics{}
+		staticFilters = filter.TaskCreationFilters{
+			filter.NewRepoAllowlistFilter(nil),
+			filter.NewEmptyUnreleasedFilter(),
+			filter.NewAutoReleaseFilter(),
+		}
+	})
+
+	AfterEach(func() {
+		_ = os.RemoveAll(tmpDir)
+	})
+
+	It("sets the rate-limit gauge on a scoped poll", func() {
+		ghClient.RateLimitRemainingReturns(7342)
+		w := pkg.NewWatcher(ghClient, publisher, metrics, cursorPath, "bborbe", staticFilters)
+		Expect(w.Poll(ctx, false, "bborbe/obsidian-openclaw")).To(Succeed())
+
+		Expect(metrics.SetRateLimitRemainingCallCount()).To(Equal(1))
+		Expect(metrics.SetRateLimitRemainingArgsForCall(0)).To(Equal(7342))
+	})
+})

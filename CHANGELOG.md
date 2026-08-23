@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## v0.4.3
 
 - fix: debounce + scope webhook-triggered release-checks — the `/webhook/github-release` handler now dispatches only pushes that touch `CHANGELOG.md` / `.maintainer.yaml`, per-repo debounced (`WEBHOOK_MIN_INTERVAL`, default 1m), and the executor scopes the poll to the pushed repo (`cmd.Scope`); kills the full-fleet scan per push that exhausted the shared App token's 12,500/hr rate limit and stalled all bot reviews (2026-08-23)
+- feat: `github_release_watcher_rate_limit_remaining` gauge — exposes the shared App token's primary rate-limit remaining (from `X-RateLimit-Remaining`) after every poll, the alert surface for quota exhaustion before the fleet-wide 403 stall (2026-08-23)
 
 ## v0.4.2
 

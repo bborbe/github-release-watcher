@@ -36,6 +36,11 @@ type Metrics interface {
 	// IncWebhookSkipped increments the webhook skip counter.
 	// reason: "no_release_files" | "debounced"
 	IncWebhookSkipped(reason string)
+
+	// SetRateLimitRemaining records the primary rate-limit window's remaining
+	// requests (shared App token). The alert rule on this gauge fires BEFORE
+	// quota exhaustion, catching the 2026-08-23 silent fleet-wide stall.
+	SetRateLimitRemaining(remaining int)
 }
 
 const metricNamespace = "github_release_watcher"
@@ -90,6 +95,11 @@ func NewMetrics(registerer prometheus.Registerer) Metrics {
 			Name:      "webhook_skipped_total",
 			Help:      "Total GitHub webhook push deliveries skipped by reason.",
 		}, []string{"reason"}),
+		rateLimitRemaining: prometheus.NewGauge(prometheus.GaugeOpts{
+			Namespace: metricNamespace,
+			Name:      "rate_limit_remaining",
+			Help:      "Requests remaining in the GitHub primary rate-limit window (shared App token). Zero until the first API response populates it.",
+		}),
 	}
 	registerer.MustRegister(
 		m.pollCycleTotal,
@@ -100,6 +110,7 @@ func NewMetrics(registerer prometheus.Registerer) Metrics {
 		m.webhookSignatureRejectionsTotal,
 		m.webhookDispatchLatencySeconds,
 		m.webhookSkippedTotal,
+		m.rateLimitRemaining,
 	)
 	for _, r := range []string{"success", "rate_limited", "github_error"} {
 		m.pollCycleTotal.WithLabelValues(r).Add(0)
@@ -129,6 +140,7 @@ type prometheusMetrics struct {
 	webhookSignatureRejectionsTotal prometheus.Counter
 	webhookDispatchLatencySeconds   prometheus.Histogram
 	webhookSkippedTotal             *prometheus.CounterVec
+	rateLimitRemaining              prometheus.Gauge
 }
 
 func (m *prometheusMetrics) IncPollCycle(result string) {
@@ -157,6 +169,10 @@ func (m *prometheusMetrics) IncWebhookSignatureRejected() {
 
 func (m *prometheusMetrics) IncWebhookSkipped(reason string) {
 	m.webhookSkippedTotal.WithLabelValues(reason).Inc()
+}
+
+func (m *prometheusMetrics) SetRateLimitRemaining(remaining int) {
+	m.rateLimitRemaining.Set(float64(remaining))
 }
 
 func (m *prometheusMetrics) ObserveWebhookDispatchLatency(seconds float64) {
