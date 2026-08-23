@@ -197,12 +197,20 @@ var _ = Describe("pkg.GitHubClient", func() {
 		})
 
 		Context("empty DefaultBranch", func() {
-			It("returns wrapped error and does not make HTTP request", func() {
-				var requestCount int
+			It("resolves the default branch via the repo endpoint before fetching the SHA", func() {
+				var requestPaths []string
 				server := httptest.NewServer(
 					http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-						requestCount++
-						w.WriteHeader(http.StatusOK)
+						requestPaths = append(requestPaths, r.URL.Path)
+						w.Header().Set("Content-Type", "application/json")
+						switch {
+						case r.URL.Path == "/repos/x/y":
+							fmt.Fprint(w, `{"default_branch":"master"}`)
+						case r.URL.Path == "/repos/x/y/branches/master":
+							fmt.Fprint(w, `{"commit":{"sha":"abc123"}}`)
+						default:
+							w.WriteHeader(http.StatusNotFound)
+						}
 					}),
 				)
 				defer server.Close()
@@ -211,13 +219,13 @@ var _ = Describe("pkg.GitHubClient", func() {
 				err := pkg.SetBaseURL(client, server.URL+"/")
 				Expect(err).NotTo(HaveOccurred())
 
-				_, err = client.GetMasterSHA(
+				sha, err := client.GetMasterSHA(
 					ctx,
 					pkg.Repo{Owner: "x", Name: "y", DefaultBranch: ""},
 				)
-				Expect(err).To(HaveOccurred())
-				Expect(err.Error()).To(ContainSubstring("empty DefaultBranch"))
-				Expect(requestCount).To(Equal(0))
+				Expect(err).NotTo(HaveOccurred())
+				Expect(sha).To(Equal("abc123"))
+				Expect(requestPaths).To(ContainElement("/repos/x/y"))
 			})
 		})
 	})
