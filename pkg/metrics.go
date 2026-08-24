@@ -11,7 +11,7 @@ import "github.com/prometheus/client_golang/prometheus"
 // Metrics is the four observable counters required by [[Watcher Writing Guide]] §
 // Required observability.
 type Metrics interface {
-	// IncPollCycle — result: "success" | "rate_limited" | "github_error"
+	// IncPollCycle — result: "success" | "rate_limited" | "github_error" | "quota_low"
 	IncPollCycle(result string)
 
 	// IncPublished — status: "create" | "error"
@@ -112,7 +112,7 @@ func NewMetrics(registerer prometheus.Registerer) Metrics {
 		m.webhookSkippedTotal,
 		m.rateLimitRemaining,
 	)
-	for _, r := range []string{"success", "rate_limited", "github_error"} {
+	for _, r := range []string{"success", "rate_limited", "github_error", "quota_low"} {
 		m.pollCycleTotal.WithLabelValues(r).Add(0)
 	}
 	for _, s := range []string{"create", "error"} {

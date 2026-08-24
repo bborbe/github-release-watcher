@@ -64,8 +64,9 @@ type application struct {
 	// purposes. Empty means unprefixed topics.
 	TopicPrefix base.TopicPrefix `required:"false" arg:"topic-prefix" env:"TOPIC_PREFIX" usage:"Kafka topic prefix for CQRS topic construction"`
 
-	WebhookSecret      string `required:"false" arg:"webhook-secret"       env:"WEBHOOK_SECRET"       usage:"GitHub webhook secret for HMAC verification of /webhook/github-release"                 display:"length"`
-	WebhookMinInterval string `required:"false" arg:"webhook-min-interval" env:"WEBHOOK_MIN_INTERVAL" usage:"Min interval between webhook-triggered release-checks per repo (collapses push storms)"                  default:"1m"`
+	WebhookSecret      string `required:"false" arg:"webhook-secret"       env:"WEBHOOK_SECRET"       usage:"GitHub webhook secret for HMAC verification of /webhook/github-release"                                                                                                              display:"length"`
+	WebhookMinInterval string `required:"false" arg:"webhook-min-interval" env:"WEBHOOK_MIN_INTERVAL" usage:"Min interval between webhook-triggered release-checks per repo (collapses push storms)"                                                                                                               default:"1m"`
+	QuotaMinRemaining  int    `required:"false" arg:"quota-min-remaining"  env:"QUOTA_MIN_REMAINING"  usage:"Skip the full-fleet scan cycle when the shared App token's primary remaining is below this threshold (graceful degradation — webhook scoped checks still run). 0 disables the gate."                  default:"2000"`
 	TriggerHandler     http.Handler
 	WebhookHandler     http.Handler
 }
@@ -123,6 +124,7 @@ func (a *application) Run(ctx context.Context, _ libsentry.Client) error {
 		metrics,
 		a.Stage,
 		a.TargetVault,
+		a.QuotaMinRemaining,
 	)
 
 	// HTTP-side sender backs the /trigger handler.

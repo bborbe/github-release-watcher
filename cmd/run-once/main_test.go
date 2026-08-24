@@ -88,6 +88,7 @@ var _ = Describe("Run", func() {
 			_ pkg.Metrics,
 			_ string,
 			targetVault string,
+			_ int,
 		) pkg.Watcher {
 			capturedTargetVault = targetVault
 			return watcherMock

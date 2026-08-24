@@ -91,7 +91,7 @@ var _ = Describe("pkg.Watcher.Poll", func() {
 				metrics,
 				cursorPath,
 				"bborbe",
-				staticFilters,
+				staticFilters, 0,
 			)
 
 			Expect(w.Poll(ctx, false, "")).To(Succeed())
@@ -154,7 +154,15 @@ var _ = Describe("pkg.Watcher.Poll", func() {
 				Release: maintainerconfig.ReleaseConfig{AutoRelease: true, AllowFork: true},
 			}, nil)
 
-			w := pkg.NewWatcher(ghClient, publisher, metrics, cursorPath, "bborbe", staticFilters)
+			w := pkg.NewWatcher(
+				ghClient,
+				publisher,
+				metrics,
+				cursorPath,
+				"bborbe",
+				staticFilters,
+				0,
+			)
 			Expect(w.Poll(ctx, false, "")).To(Succeed())
 
 			Expect(publisher.PublishCreateCallCount()).To(Equal(1))
@@ -171,7 +179,15 @@ var _ = Describe("pkg.Watcher.Poll", func() {
 				Release: maintainerconfig.ReleaseConfig{AutoRelease: true, AllowFork: false},
 			}, nil)
 
-			w := pkg.NewWatcher(ghClient, publisher, metrics, cursorPath, "bborbe", staticFilters)
+			w := pkg.NewWatcher(
+				ghClient,
+				publisher,
+				metrics,
+				cursorPath,
+				"bborbe",
+				staticFilters,
+				0,
+			)
 			Expect(w.Poll(ctx, false, "")).To(Succeed())
 
 			Expect(publisher.PublishCreateCallCount()).To(Equal(0))
@@ -187,7 +203,15 @@ var _ = Describe("pkg.Watcher.Poll", func() {
 				Release: maintainerconfig.ReleaseConfig{AutoRelease: true, AllowFork: false},
 			}, nil)
 
-			w := pkg.NewWatcher(ghClient, publisher, metrics, cursorPath, "bborbe", staticFilters)
+			w := pkg.NewWatcher(
+				ghClient,
+				publisher,
+				metrics,
+				cursorPath,
+				"bborbe",
+				staticFilters,
+				0,
+			)
 			Expect(w.Poll(ctx, false, "")).To(Succeed())
 
 			Expect(publisher.PublishCreateCallCount()).To(Equal(1))
@@ -214,7 +238,7 @@ var _ = Describe("pkg.Watcher.Poll", func() {
 				metrics,
 				cursorPath,
 				"bborbe",
-				staticFilters,
+				staticFilters, 0,
 			)
 
 			Expect(w.Poll(ctx, false, "")).To(Succeed())
@@ -246,7 +270,7 @@ var _ = Describe("pkg.Watcher.Poll", func() {
 				metrics,
 				cursorPath,
 				"bborbe",
-				staticFilters,
+				staticFilters, 0,
 			)
 
 			Expect(w.Poll(ctx, false, "")).To(Succeed())
@@ -303,7 +327,7 @@ var _ = Describe("pkg.Watcher.Poll", func() {
 						metrics,
 						cursorPath,
 						"bborbe",
-						staticFilters,
+						staticFilters, 0,
 					)
 
 					Expect(w.Poll(ctx, false, "")).To(Succeed())
@@ -369,7 +393,7 @@ var _ = Describe("pkg.Watcher.Poll", func() {
 				metrics,
 				cursorPath,
 				"bborbe",
-				staticFilters,
+				staticFilters, 0,
 			)
 
 			Expect(w.Poll(ctx, false, "")).To(Succeed())
@@ -420,7 +444,7 @@ var _ = Describe("pkg.Watcher.Poll", func() {
 				metrics,
 				cursorPath,
 				"bborbe",
-				staticFilters,
+				staticFilters, 0,
 			)
 
 			Expect(w.Poll(ctx, false, "")).To(Succeed())
@@ -481,7 +505,7 @@ var _ = Describe("pkg.Watcher.Poll", func() {
 
 			It("Poll(ctx, false) skips docker-utils via sha_unchanged", func() {
 				w := pkg.NewWatcher(
-					ghClient, publisher, metrics, cursorPath, "bborbe", staticFilters,
+					ghClient, publisher, metrics, cursorPath, "bborbe", staticFilters, 0,
 				)
 
 				Expect(w.Poll(ctx, false, "")).To(Succeed())
@@ -506,7 +530,7 @@ var _ = Describe("pkg.Watcher.Poll", func() {
 
 			It("Poll(ctx, true) publishes docker-utils despite cursor match", func() {
 				w := pkg.NewWatcher(
-					ghClient, publisher, metrics, cursorPath, "bborbe", staticFilters,
+					ghClient, publisher, metrics, cursorPath, "bborbe", staticFilters, 0,
 				)
 
 				Expect(w.Poll(ctx, true, "")).To(Succeed())
@@ -570,7 +594,7 @@ var _ = Describe("pkg.Watcher.Poll", func() {
 
 		It("Poll(ctx, false) composes SHAUnchangedFilter into the cycle chain", func() {
 			w := pkg.NewWatcher(
-				ghClient, publisher, metrics, cursorPath, "bborbe", staticFilters,
+				ghClient, publisher, metrics, cursorPath, "bborbe", staticFilters, 0,
 			)
 			Expect(w.Poll(ctx, false, "")).To(Succeed())
 
@@ -587,7 +611,7 @@ var _ = Describe("pkg.Watcher.Poll", func() {
 
 		It("Poll(ctx, true) excludes SHAUnchangedFilter from the cycle chain", func() {
 			w := pkg.NewWatcher(
-				ghClient, publisher, metrics, cursorPath, "bborbe", staticFilters,
+				ghClient, publisher, metrics, cursorPath, "bborbe", staticFilters, 0,
 			)
 			Expect(w.Poll(ctx, true, "")).To(Succeed())
 
@@ -651,7 +675,7 @@ var _ = Describe("pkg.Watcher.Poll with scope (webhook path)", func() {
 	})
 
 	newWatcher := func() pkg.Watcher {
-		return pkg.NewWatcher(ghClient, publisher, metrics, cursorPath, "bborbe", staticFilters)
+		return pkg.NewWatcher(ghClient, publisher, metrics, cursorPath, "bborbe", staticFilters, 0)
 	}
 
 	It("scoped poll scans only the scope repo — no ListRepos, ~3 calls, one publish", func() {
@@ -717,10 +741,147 @@ var _ = Describe("pkg.Watcher.Poll publishes the rate-limit gauge", func() {
 
 	It("sets the rate-limit gauge on a scoped poll", func() {
 		ghClient.RateLimitRemainingReturns(7342)
-		w := pkg.NewWatcher(ghClient, publisher, metrics, cursorPath, "bborbe", staticFilters)
+		w := pkg.NewWatcher(ghClient, publisher, metrics, cursorPath, "bborbe", staticFilters, 0)
 		Expect(w.Poll(ctx, false, "bborbe/obsidian-openclaw")).To(Succeed())
 
 		Expect(metrics.SetRateLimitRemainingCallCount()).To(Equal(1))
 		Expect(metrics.SetRateLimitRemainingArgsForCall(0)).To(Equal(7342))
+	})
+})
+
+var _ = Describe("pkg.Watcher.Poll quota gate", func() {
+	var (
+		ctx        context.Context
+		ghClient   *mocks.GitHubClient
+		publisher  *mocks.TaskPublisher
+		metrics    *mocks.Metrics
+		cursorPath string
+		tmpDir     string
+	)
+
+	BeforeEach(func() {
+		ctx = context.Background()
+		var err error
+		tmpDir, err = os.MkdirTemp("", "watcher-quota-*")
+		Expect(err).NotTo(HaveOccurred())
+		cursorPath = filepath.Join(tmpDir, "cursor.json")
+
+		ghClient = &mocks.GitHubClient{}
+		publisher = &mocks.TaskPublisher{}
+		metrics = &mocks.Metrics{}
+	})
+
+	AfterEach(func() {
+		_ = os.RemoveAll(tmpDir)
+	})
+
+	It(
+		"defers the full-fleet scan when remaining is below the quota gate and records quota_low",
+		func() {
+			ghClient.RateLimitRemainingReturns(500)
+			ghClient.ListReposReturns(
+				[]pkg.Repo{{Owner: "bborbe", Name: "docker-utils", DefaultBranch: "master"}},
+				nil,
+			)
+
+			w := pkg.NewWatcher(
+				ghClient,
+				publisher,
+				metrics,
+				cursorPath,
+				"bborbe",
+				filter.TaskCreationFilters{}, 2000,
+			)
+
+			Expect(w.Poll(ctx, false, "")).To(Succeed())
+			Expect(ghClient.ListReposCallCount()).To(Equal(0))
+			Expect(publisher.PublishCreateCallCount()).To(Equal(0))
+			Expect(metrics.IncPollCycleCallCount()).To(Equal(1))
+			Expect(metrics.IncPollCycleArgsForCall(0)).To(Equal("quota_low"))
+		},
+	)
+
+	It("runs the full scan when remaining is above the quota gate", func() {
+		ghClient.RateLimitRemainingReturns(9000)
+		ghClient.ListReposReturns(
+			[]pkg.Repo{{Owner: "bborbe", Name: "docker-utils", DefaultBranch: "master"}},
+			nil,
+		)
+		ghClient.GetMasterSHAReturns("d630ef3526cfc57fbdccd9ba53c5c3a02945e407", nil)
+		ghClient.GetChangelogContentReturns(
+			[]byte("## Unreleased\n\n- entry one\n\n## v1.7.7\n"),
+			nil,
+		)
+		ghClient.GetMaintainerConfigReturns(maintainerconfig.MaintainerConfig{
+			Release: maintainerconfig.ReleaseConfig{AutoRelease: true},
+		}, nil)
+		publisher.PublishCreateReturns(true)
+
+		w := pkg.NewWatcher(
+			ghClient,
+			publisher,
+			metrics,
+			cursorPath,
+			"bborbe",
+			filter.TaskCreationFilters{}, 2000,
+		)
+
+		Expect(w.Poll(ctx, false, "")).To(Succeed())
+		Expect(ghClient.ListReposCallCount()).To(Equal(1))
+	})
+
+	It("does not gate scoped (webhook) checks when remaining is low", func() {
+		ghClient.RateLimitRemainingReturns(500)
+		ghClient.GetMasterSHAReturns("d630ef3526cfc57fbdccd9ba53c5c3a02945e407", nil)
+		ghClient.GetChangelogContentReturns(
+			[]byte("## Unreleased\n\n- entry one\n\n## v1.7.7\n"),
+			nil,
+		)
+		ghClient.GetMaintainerConfigReturns(maintainerconfig.MaintainerConfig{
+			Release: maintainerconfig.ReleaseConfig{AutoRelease: true},
+		}, nil)
+		publisher.PublishCreateReturns(true)
+
+		w := pkg.NewWatcher(
+			ghClient,
+			publisher,
+			metrics,
+			cursorPath,
+			"bborbe",
+			filter.TaskCreationFilters{}, 2000,
+		)
+
+		Expect(w.Poll(ctx, false, "bborbe/docker-utils")).To(Succeed())
+		Expect(ghClient.ListReposCallCount()).To(Equal(0)) // scoped path never calls ListRepos
+		Expect(publisher.PublishCreateCallCount()).To(Equal(1))
+	})
+
+	It("does not gate when the gate is disabled (0)", func() {
+		ghClient.RateLimitRemainingReturns(100)
+		ghClient.ListReposReturns(
+			[]pkg.Repo{{Owner: "bborbe", Name: "docker-utils", DefaultBranch: "master"}},
+			nil,
+		)
+		ghClient.GetMasterSHAReturns("d630ef3526cfc57fbdccd9ba53c5c3a02945e407", nil)
+		ghClient.GetChangelogContentReturns(
+			[]byte("## Unreleased\n\n- entry one\n\n## v1.7.7\n"),
+			nil,
+		)
+		ghClient.GetMaintainerConfigReturns(maintainerconfig.MaintainerConfig{
+			Release: maintainerconfig.ReleaseConfig{AutoRelease: true},
+		}, nil)
+		publisher.PublishCreateReturns(true)
+
+		w := pkg.NewWatcher(
+			ghClient,
+			publisher,
+			metrics,
+			cursorPath,
+			"bborbe",
+			filter.TaskCreationFilters{}, 0,
+		)
+
+		Expect(w.Poll(ctx, false, "")).To(Succeed())
+		Expect(ghClient.ListReposCallCount()).To(Equal(1))
 	})
 })

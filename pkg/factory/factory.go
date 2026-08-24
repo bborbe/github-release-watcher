@@ -70,6 +70,7 @@ func CreateWatcher(
 	metrics pkg.Metrics,
 	stage string,
 	targetVault string,
+	quotaMinRemaining int,
 ) pkg.Watcher {
 	ghClient := pkg.NewGitHubClient(httpClient)
 	publisher := pkg.NewTaskPublisher(
@@ -84,6 +85,7 @@ func CreateWatcher(
 		cursorPath,
 		owner,
 		taskCreationFilter,
+		quotaMinRemaining,
 	)
 }
 

@@ -45,6 +45,7 @@ func NewWatcher(
 	cursorPath string,
 	owner string,
 	taskCreationFilter filter.TaskCreationFilter,
+	quotaMinRemaining int,
 ) Watcher {
 	return &watcher{
 		ghClient:           ghClient,
@@ -53,6 +54,7 @@ func NewWatcher(
 		cursorPath:         cursorPath,
 		owner:              owner,
 		taskCreationFilter: taskCreationFilter,
+		quotaMinRemaining:  quotaMinRemaining,
 	}
 }
 
@@ -63,6 +65,9 @@ type watcher struct {
 	cursorPath         string
 	owner              string
 	taskCreationFilter filter.TaskCreationFilter
+	// quotaMinRemaining skips the full-fleet scan when the shared App token's
+	// primary remaining drops below this threshold. 0 disables the gate.
+	quotaMinRemaining int
 }
 
 // Poll implements Watcher. When skipSHAUnchanged is true the cycle filter
@@ -94,6 +99,26 @@ func (w *watcher) Poll(ctx context.Context, skipSHAUnchanged bool, scope string)
 	// gauge tracks the last API response's X-RateLimit-Remaining — the alert
 	// surface for quota exhaustion before the fleet-wide 403 stall.
 	defer w.metrics.SetRateLimitRemaining(w.ghClient.RateLimitRemaining())
+
+	// Quota gate (spec 081): when the shared App token's primary remaining is
+	// below quotaMinRemaining, skip the full-fleet scan to preserve the budget
+	// for webhook-triggered scoped checks and the pr/build watchers sharing the
+	// token. Only gates the full scan (scope == ""); scoped webhook checks are
+	// ~3 API calls and stay eligible. remaining==0 (gauge not yet populated on
+	// cold start) never gates — only a known positive low value does.
+	if scope == "" && w.quotaMinRemaining > 0 {
+		if remaining := w.ghClient.RateLimitRemaining(); remaining > 0 &&
+			remaining < w.quotaMinRemaining {
+			glog.Warningf(
+				"poll cycle deferred: shared-token remaining=%d below quota-min=%d scope=%s",
+				remaining,
+				w.quotaMinRemaining,
+				scope,
+			)
+			w.metrics.IncPollCycle("quota_low")
+			return nil
+		}
+	}
 
 	repos, ok := w.resolveRepos(ctx, scope)
 	if !ok {
