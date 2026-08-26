@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+- chore: update github.com/bborbe/agent to v0.83.1, github.com/bborbe/errors to v1.5.21, github.com/bborbe/log to v1.6.25, github.com/bborbe/maintainer to v0.50.3
+
 ## v0.6.0
 
 - feat: quota-gated full-fleet scan (`QUOTA_MIN_REMAINING`, default 2000) — skip the expensive full-scan cycle when the shared App token's primary remaining drops below the threshold, preserving budget for webhook-triggered scoped checks and the pr/build watchers sharing the token. Deferred cycles recorded as `poll_cycle_total{result="quota_low"}`
