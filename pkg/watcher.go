@@ -192,20 +192,18 @@ func (w *watcher) processRepos(
 		}
 		if reason := cycleFilter.Skip(filterInput); reason != "" {
 			w.metrics.IncFilterSkipped(reason)
-			// The fork drop used to happen silently at ListRepos time (before
-			// forks reached any filter) — this line is the fix: name the repo
-			// AND the reason so a fork stuck behind a missing/typo'd
-			// `allowFork` is debuggable from logs alone, not a 40min diagnosis.
+			// EVERY skip is logged, not just the fork drop. The fork drop used
+			// to happen silently at ListRepos time (before forks reached any
+			// filter) and naming its repo+reason is what made it debuggable
+			// from logs alone; the same is true of every other label. A skip
+			// that only bumps a metric is invisible without a metric query
+			// nobody runs, so a dedup-engaged cycle reads exactly like "nothing
+			// to release" — 2026-09-24: three operator actions spent, and the
+			// cause was findable only by reading the source.
 			// V(2) matches the per-repo convention above (see the "repo dropped
-			// from cycle" note) — always-on visibility is carried by the
-			// ungated forks= count in the ListRepos summary and by
-			// filter_skipped_total{reason="fork"}, so V0 is not needed here.
-			if reason == "fork" {
-				glog.V(2).Infof(
-					"github-release-watcher skipping fork %s reason=allowFork-not-set",
-					repo.Key(),
-				)
-			}
+			// from cycle" note) and is the level all three deployed stages run
+			// (-v=2), so the line is visible with no log-level change.
+			glog.V(2).Info(filterSkipMessage(repo.Key(), reason))
 			continue
 		}
 
@@ -217,6 +215,20 @@ func (w *watcher) processRepos(
 		}
 	}
 	return ""
+}
+
+// filterSkipMessage formats the per-repo filter-skip log line: the repo and
+// the metric label the chain returned. Extracted from processRepos so the
+// repo+reason contract is assertable without glog-capture infrastructure the
+// repo does not have (the same seam as the executor's `force=%t` formatter).
+// The fork label carries an extra detail because a fork stuck behind a
+// missing/typo'd `allowFork` is otherwise undebuggable from logs alone.
+func filterSkipMessage(repoKey, reason string) string {
+	if reason == "fork" {
+		return "github-release-watcher skipping repo=" + repoKey +
+			" reason=" + reason + " detail=allowFork-not-set"
+	}
+	return "github-release-watcher skipping repo=" + repoKey + " reason=" + reason
 }
 
 // resolveRepos returns the repos to scan this cycle: the full fleet for an

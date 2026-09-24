@@ -170,8 +170,14 @@ func (a *application) Run(ctx context.Context, _ libsentry.Client) error {
 	poll := func(ctx context.Context) error {
 		glog.V(2).Infof("poll cycle start stage=%s", a.Stage)
 		// skipSHAUnchanged=false: the interval-driven loop is the canonical
-		// dedup-engaged path. force=true comes exclusively from the HTTP
-		// /trigger handler's command publish (spec 071). scope="" = full scan.
+		// dedup-engaged path. A forced cycle reaches Poll through exactly two
+		// entry points, both via the /trigger handler's command publish
+		// (spec 071): the `?force=true` query param, and a command published
+		// with {"force":true} — which is what the github-release-repo-trigger
+		// skill's `--force` flag sends. A bare /trigger, and that skill's
+		// default `{}` payload, both mean force=false, i.e. the dedup-engaged
+		// scan — an operator reading only "force comes from /trigger" would
+		// expect otherwise. scope="" = full scan.
 		return w.Poll(ctx, false, "")
 	}
 

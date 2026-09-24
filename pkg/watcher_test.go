@@ -885,3 +885,31 @@ var _ = Describe("pkg.Watcher.Poll quota gate", func() {
 		Expect(ghClient.ListReposCallCount()).To(Equal(1))
 	})
 })
+
+var _ = Describe("pkg.Watcher filter-skip log line", func() {
+	// Before this, a skip bumped IncFilterSkipped and wrote no log line, so a
+	// dedup-engaged cycle was indistinguishable from "nothing to release" —
+	// the 2026-09-24 diagnosis cost three operator actions and the cause was
+	// only findable by reading the source. The message is asserted through
+	// this shared formatter because the repo has no glog-capture
+	// infrastructure (same seam as the executor's force=%t formatter).
+	It("names the repo and the filter reason for every skip label", func() {
+		for _, reason := range []string{
+			"scope",
+			"empty_unreleased",
+			"auto_release",
+			"sha_unchanged",
+		} {
+			msg := pkg.FilterSkipMessage("github.com/bborbe/docker-utils", reason)
+			Expect(msg).To(ContainSubstring("github.com/bborbe/docker-utils"))
+			Expect(msg).To(ContainSubstring("reason=" + reason))
+		}
+	})
+
+	It("keeps the fork detail a fork behind a missing allowFork needs", func() {
+		msg := pkg.FilterSkipMessage("github.com/bborbe/docker-utils", "fork")
+		Expect(msg).To(ContainSubstring("github.com/bborbe/docker-utils"))
+		Expect(msg).To(ContainSubstring("reason=fork"))
+		Expect(msg).To(ContainSubstring("allowFork-not-set"))
+	})
+})
