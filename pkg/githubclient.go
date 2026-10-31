@@ -100,6 +100,7 @@ func NewGitHubClient(httpClient *http.Client) GitHubClient {
 	httpClient.Transport = &rateCapturingTransport{
 		inner: inner,
 		set:   c.setRateRemaining,
+		log:   logNon2xxV2,
 	}
 	c.client = gogithub.NewClient(httpClient)
 	return c
@@ -128,21 +129,38 @@ func (c *githubClient) RateLimitRemaining() int {
 // capture point covers every API call (success, pagination, and error
 // responses that carry the header), so the watcher can expose the shared
 // token's remaining quota without touching each method.
+//
+// The same capture point logs one line per non-2xx response (status, rate-limit
+// bucket, remaining, Retry-After, body snippet) via log — the only record of
+// whether a 429/403 is primary-quota exhaustion or secondary rate limiting.
+// go-github does not log at its HTTP boundary, so without this line that
+// evidence is lost. A nil log disables it.
 type rateCapturingTransport struct {
 	inner http.RoundTripper
 	set   func(int)
+	log   func(string)
 }
 
 func (t *rateCapturingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	resp, err := t.inner.RoundTrip(req)
-	if err == nil && resp != nil {
-		if v := resp.Header.Get("X-RateLimit-Remaining"); v != "" {
-			if n, parseErr := strconv.Atoi(v); parseErr == nil {
-				t.set(n)
-			}
-		}
+	if err != nil || resp == nil {
+		return resp, err
+	}
+	t.captureRemaining(resp)
+	if t.log != nil {
+		logNon2xxResponse(req, resp, t.log)
 	}
 	return resp, err
+}
+
+// captureRemaining records the response's remaining quota from the
+// X-RateLimit-Remaining header into the gauge.
+func (t *rateCapturingTransport) captureRemaining(resp *http.Response) {
+	if v := resp.Header.Get("X-RateLimit-Remaining"); v != "" {
+		if n, parseErr := strconv.Atoi(v); parseErr == nil {
+			t.set(n)
+		}
+	}
 }
 
 // isRateLimitError reports whether err is a GitHub API rate-limit signal
