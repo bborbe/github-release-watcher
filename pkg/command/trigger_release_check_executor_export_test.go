@@ -10,6 +10,7 @@ import (
 	"github.com/bborbe/cqrs/base"
 	cdb "github.com/bborbe/cqrs/cdb"
 	"github.com/bborbe/github-release-watcher/pkg"
+	"github.com/bborbe/github-release-watcher/pkg/build"
 	libkv "github.com/bborbe/kv"
 )
 
@@ -26,6 +27,7 @@ var _ = func(
 	tx libkv.Tx,
 	obj cdb.CommandObject,
 	watcher pkg.Watcher,
+	dispatcher build.Dispatcher,
 ) (*base.EventID, base.Event, error) {
-	return runTriggerReleaseCheck(ctx, tx, obj, watcher)
+	return runTriggerReleaseCheck(ctx, tx, obj, watcher, dispatcher)
 }

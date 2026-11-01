@@ -25,6 +25,7 @@ import (
 	"github.com/bborbe/github-release-watcher/pkg/factory"
 	"github.com/bborbe/github-release-watcher/pkg/filter"
 	libhttp "github.com/bborbe/http"
+	libk8s "github.com/bborbe/k8s"
 	libkafka "github.com/bborbe/kafka"
 	"github.com/bborbe/run"
 	libsentry "github.com/bborbe/sentry"
@@ -115,8 +116,25 @@ func (a *application) Run(ctx context.Context, _ libsentry.Client) error {
 	sender := factory.CreateKafkaSender(syncProducer, a.TopicPrefix)
 	staticFilters := factory.CreateStaticFilters(allowlist)
 
-	w := factory.CreateWatcher(
+	ghClient := pkg.NewGitHubClient(httpClient)
+
+	// Build dispatch: a release-tag push creates a build Job in-cluster. The
+	// clientset is resolved from the pod's service account — a failure here is
+	// fatal on purpose: a watcher that silently cannot build would accept tag
+	// pushes and drop them, which is indistinguishable from "nothing to do".
+	clientset, err := libk8s.CreateClientset("")
+	if err != nil {
+		return errors.Wrap(ctx, err, "create kubernetes clientset")
+	}
+	dispatcher := factory.CreateBuildDispatcher(
+		ghClient,
+		libk8s.NewJobDeployer(clientset),
 		httpClient,
+		metrics,
+	)
+
+	w := factory.CreateWatcher(
+		ghClient,
 		sender,
 		a.CursorPath,
 		a.Owner,
@@ -125,6 +143,7 @@ func (a *application) Run(ctx context.Context, _ libsentry.Client) error {
 		a.Stage,
 		a.TargetVault,
 		a.QuotaMinRemaining,
+		dispatcher,
 	)
 
 	// HTTP-side sender backs the /trigger handler.
@@ -159,6 +178,7 @@ func (a *application) Run(ctx context.Context, _ libsentry.Client) error {
 		syncProducer,
 		db,
 		w, // shared with the poll-interval loop
+		dispatcher,
 		a.TopicPrefix,
 	)
 

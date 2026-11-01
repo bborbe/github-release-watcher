@@ -46,7 +46,11 @@ func NewWatcher(
 	owner string,
 	taskCreationFilter filter.TaskCreationFilter,
 	quotaMinRemaining int,
+	backstop TagBackstop,
 ) Watcher {
+	if backstop == nil {
+		backstop = NoopTagBackstop{}
+	}
 	return &watcher{
 		ghClient:           ghClient,
 		publisher:          publisher,
@@ -55,6 +59,7 @@ func NewWatcher(
 		owner:              owner,
 		taskCreationFilter: taskCreationFilter,
 		quotaMinRemaining:  quotaMinRemaining,
+		backstop:           backstop,
 	}
 }
 
@@ -68,6 +73,10 @@ type watcher struct {
 	// quotaMinRemaining skips the full-fleet scan when the shared App token's
 	// primary remaining drops below this threshold. 0 disables the gate.
 	quotaMinRemaining int
+	// backstop recovers a build whose tag-push webhook never arrived. It runs
+	// inside this cycle rather than on its own ticker so it inherits the quota
+	// gate and does not double the scan's API cost.
+	backstop TagBackstop
 }
 
 // Poll implements Watcher. When skipSHAUnchanged is true the cycle filter
@@ -174,6 +183,12 @@ func (w *watcher) processRepos(
 		default:
 		}
 
+		// The backstop runs before the release filters: a missed tag push has
+		// nothing to do with whether the repo currently has unreleased bullets,
+		// so gating it behind those filters would let exactly the case it
+		// exists for slip through.
+		w.runBackstop(ctx, repo, cursorState)
+
 		release, abortReason, dropped := w.gatherRelease(ctx, repo)
 		if abortReason != "" {
 			return abortReason
@@ -208,13 +223,50 @@ func (w *watcher) processRepos(
 		}
 
 		if w.publisher.PublishCreate(ctx, release) {
-			if cursorState.Repos == nil {
-				cursorState.Repos = make(map[string]*RepoState)
-			}
-			cursorState.Repos[repo.Key()] = &RepoState{LastSeenMasterSHA: release.HeadSHA}
+			// Update the existing entry rather than replacing it — the backstop
+			// already wrote LastBuiltTag into the same struct, and a fresh
+			// &RepoState{} here would silently erase it, making the backstop
+			// re-dispatch the same tag every cycle.
+			state := w.repoState(cursorState, repo.Key())
+			state.LastSeenMasterSHA = release.HeadSHA
 		}
 	}
 	return ""
+}
+
+// runBackstop lets the tag backstop recover a missed webhook delivery for one
+// repo, persisting the tag it handled so the next cycle stays silent.
+func (w *watcher) runBackstop(ctx context.Context, repo Repo, cursorState *Cursor) {
+	// Read without creating: a repo with nothing to record must not gain a
+	// cursor entry, or the cursor grows to the whole fleet every cycle.
+	var lastBuilt string
+	if state := cursorState.Repos[repo.Key()]; state != nil {
+		lastBuilt = state.LastBuiltTag
+	}
+	tag, err := w.backstop.Poll(ctx, repo.Key(), lastBuilt)
+	if err != nil {
+		// Best-effort: a backstop failure must not abort a cycle that is also
+		// doing the release scan. The next cycle retries.
+		glog.V(2).Infof("tag backstop failed repo=%s err=%v", repo.Key(), err)
+		return
+	}
+	if tag == "" {
+		return
+	}
+	w.repoState(cursorState, repo.Key()).LastBuiltTag = tag
+}
+
+// repoState returns the cursor entry for key, creating it on first use.
+func (w *watcher) repoState(cursorState *Cursor, key string) *RepoState {
+	if cursorState.Repos == nil {
+		cursorState.Repos = make(map[string]*RepoState)
+	}
+	state := cursorState.Repos[key]
+	if state == nil {
+		state = &RepoState{}
+		cursorState.Repos[key] = state
+	}
+	return state
 }
 
 // filterSkipMessage formats the per-repo filter-skip log line: the repo and

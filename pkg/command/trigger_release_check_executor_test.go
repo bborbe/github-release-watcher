@@ -11,6 +11,7 @@ import (
 	cdb "github.com/bborbe/cqrs/cdb"
 	"github.com/bborbe/errors"
 	"github.com/bborbe/github-release-watcher/mocks"
+	"github.com/bborbe/github-release-watcher/pkg/build"
 	"github.com/bborbe/github-release-watcher/pkg/command"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -34,6 +35,13 @@ func mustParseEvent(cmd command.TriggerReleaseCheckCommand) base.Event {
 	evt, err := base.ParseEvent(context.Background(), cmd)
 	Expect(err).NotTo(HaveOccurred())
 	return evt
+}
+
+// newDispatcher returns a build dispatcher whose Dispatch always succeeds.
+// The release-check assertions here never depend on build dispatch, so a fresh
+// fake per call keeps them independent of one another.
+func newDispatcher() *mocks.BuildDispatcher {
+	return new(mocks.BuildDispatcher)
 }
 
 func newCommandObject(cmd command.TriggerReleaseCheckCommand) cdb.CommandObject {
@@ -80,7 +88,7 @@ var _ = Describe("NewTriggerReleaseCheckCommandExecutor", func() {
 			*watcher = mocks.Watcher{}
 			configure(watcher)
 
-			_, _, err := command.RunTriggerReleaseCheck(ctx, nil, obj, watcher)
+			_, _, err := command.RunTriggerReleaseCheck(ctx, nil, obj, watcher, newDispatcher())
 
 			switch expectOutcome {
 			case outcomeSkipped:
@@ -154,7 +162,13 @@ var _ = Describe("executor force flag plumbing (spec 071)", func() {
 		commandObject := newCommandObject(
 			command.TriggerReleaseCheckCommand{Force: true},
 		)
-		_, _, err := command.RunTriggerReleaseCheck(ctx, nil, commandObject, watcher)
+		_, _, err := command.RunTriggerReleaseCheck(
+			ctx,
+			nil,
+			commandObject,
+			watcher,
+			newDispatcher(),
+		)
 		Expect(err).NotTo(HaveOccurred())
 
 		Expect(watcher.PollCallCount()).To(Equal(1))
@@ -167,7 +181,13 @@ var _ = Describe("executor force flag plumbing (spec 071)", func() {
 		commandObject := newCommandObject(
 			command.TriggerReleaseCheckCommand{Force: false},
 		)
-		_, _, err := command.RunTriggerReleaseCheck(ctx, nil, commandObject, watcher)
+		_, _, err := command.RunTriggerReleaseCheck(
+			ctx,
+			nil,
+			commandObject,
+			watcher,
+			newDispatcher(),
+		)
 		Expect(err).NotTo(HaveOccurred())
 
 		Expect(watcher.PollCallCount()).To(Equal(1))
@@ -186,7 +206,13 @@ var _ = Describe("executor force flag plumbing (spec 071)", func() {
 		commandObject := newCommandObject(
 			command.TriggerReleaseCheckCommand{Force: true},
 		)
-		_, _, err := command.RunTriggerReleaseCheck(ctx, nil, commandObject, watcher)
+		_, _, err := command.RunTriggerReleaseCheck(
+			ctx,
+			nil,
+			commandObject,
+			watcher,
+			newDispatcher(),
+		)
 		Expect(err).To(HaveOccurred())
 		Expect(err.Error()).To(ContainSubstring("force=true"))
 	})
@@ -196,7 +222,13 @@ var _ = Describe("executor force flag plumbing (spec 071)", func() {
 		commandObject := newCommandObject(
 			command.TriggerReleaseCheckCommand{Force: false},
 		)
-		_, _, err := command.RunTriggerReleaseCheck(ctx, nil, commandObject, watcher)
+		_, _, err := command.RunTriggerReleaseCheck(
+			ctx,
+			nil,
+			commandObject,
+			watcher,
+			newDispatcher(),
+		)
 		Expect(err).To(HaveOccurred())
 		Expect(err.Error()).To(ContainSubstring("force=false"))
 	})
@@ -237,7 +269,7 @@ var _ = Describe("executor crash recovery (spec 067 AC 19)", func() {
 		commandObject := newCommandObject(cmd)
 
 		_, _, err := command.RunTriggerReleaseCheck(
-			killedCtx, nil, commandObject, watcher,
+			killedCtx, nil, commandObject, watcher, newDispatcher(),
 		)
 		Expect(err).To(HaveOccurred(),
 			"killed invocation must return a transient error so Kafka redelivers")
@@ -254,10 +286,67 @@ var _ = Describe("executor crash recovery (spec 067 AC 19)", func() {
 		freshWatcher.PollReturns(nil)
 
 		_, _, err = command.RunTriggerReleaseCheck(
-			context.Background(), nil, commandObject, freshWatcher,
+			context.Background(), nil, commandObject, freshWatcher, newDispatcher(),
 		)
 		Expect(err).NotTo(HaveOccurred(), "retry must succeed: %v", err)
 		Expect(freshWatcher.PollCallCount()).To(Equal(1),
 			"retry must invoke Poll on the fresh Watcher exactly once")
+	})
+})
+
+var _ = Describe("executor build dispatch on tag push", func() {
+	var (
+		ctx        context.Context
+		watcher    *mocks.Watcher
+		dispatcher *mocks.BuildDispatcher
+	)
+
+	BeforeEach(func() {
+		ctx = context.Background()
+		watcher = new(mocks.Watcher)
+		dispatcher = new(mocks.BuildDispatcher)
+	})
+
+	It("dispatches the tag with the webhook trigger, then still runs the release check", func() {
+		commandObject := newCommandObject(
+			command.TriggerReleaseCheckCommand{Scope: "bborbe/repo", Tag: "v1.2.3"},
+		)
+
+		_, _, err := command.RunTriggerReleaseCheck(ctx, nil, commandObject, watcher, dispatcher)
+		Expect(err).NotTo(HaveOccurred())
+
+		Expect(dispatcher.DispatchCallCount()).To(Equal(1))
+		_, req, trigger := dispatcher.DispatchArgsForCall(0)
+		Expect(req.Repo).To(Equal("bborbe/repo"))
+		Expect(req.Tag).To(Equal("v1.2.3"))
+		Expect(trigger).To(Equal(build.TriggerWebhook))
+
+		Expect(watcher.PollCallCount()).To(Equal(1),
+			"the release check must still run for the same repo")
+	})
+
+	It("does not dispatch for a branch push (empty tag)", func() {
+		commandObject := newCommandObject(
+			command.TriggerReleaseCheckCommand{Scope: "bborbe/repo"},
+		)
+
+		_, _, err := command.RunTriggerReleaseCheck(ctx, nil, commandObject, watcher, dispatcher)
+		Expect(err).NotTo(HaveOccurred())
+
+		Expect(dispatcher.DispatchCallCount()).To(Equal(0))
+	})
+
+	It("returns a transient error when the dispatch fails", func() {
+		dispatcher.DispatchReturns(errors.Errorf(ctx, "cluster unreachable"))
+		commandObject := newCommandObject(
+			command.TriggerReleaseCheckCommand{Scope: "bborbe/repo", Tag: "v1.2.3"},
+		)
+
+		_, _, err := command.RunTriggerReleaseCheck(ctx, nil, commandObject, watcher, dispatcher)
+		Expect(err).To(HaveOccurred())
+		Expect(errors.Is(err, cdb.ErrCommandObjectSkipped)).To(BeFalse(),
+			"a dispatch failure is transient, not a deliberate skip")
+		Expect(watcher.PollCallCount()).To(Equal(0),
+			"the release check must not run after a failed dispatch")
 	})
 })

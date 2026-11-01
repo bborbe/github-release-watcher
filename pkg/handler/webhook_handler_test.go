@@ -77,6 +77,12 @@ var _ = Describe("WebhookHandler", func() {
 		return `{"ref":"refs/heads/master","repository":{"full_name":"` + repo + `"},"commits":[{"modified":["README.md"]}]}`
 	}
 
+	// tagPayload builds a tag push: GitHub delivers these with an EMPTY commits
+	// array, which is why the release-file gate would otherwise drop them.
+	tagPayload := func(repo, tag string) string {
+		return `{"ref":"refs/tags/` + tag + `","repository":{"full_name":"` + repo + `"},"commits":[]}`
+	}
+
 	Context("signature verification", func() {
 		It(
 			"rejects a missing signature with 401, no publish, increments rejection counter",
@@ -240,6 +246,79 @@ var _ = Describe("WebhookHandler", func() {
 			Expect(sender.SendCommandCallCount()).To(Equal(1))
 			Expect(metrics.IncWebhookSkippedCallCount()).To(Equal(1))
 			Expect(metrics.IncWebhookSkippedArgsForCall(0)).To(Equal("debounced"))
+		})
+	})
+
+	Context("tag push dispatch", func() {
+		It("dispatches a tag push that carries no commits, with the tag on the command", func() {
+			req := webhookRequest("push", tagPayload("bborbe/repo", "v1.2.3"))
+			resp := httptest.NewRecorder()
+			h.ServeHTTP(resp, req)
+
+			Expect(resp.Code).To(Equal(http.StatusAccepted))
+			Expect(sender.SendCommandCallCount()).To(Equal(1))
+			_, sentCmd := sender.SendCommandArgsForCall(0)
+			Expect(sentCmd.Scope).To(Equal("bborbe/repo"))
+			Expect(sentCmd.Tag).To(Equal("v1.2.3"))
+		})
+
+		It("does not record the release-file skip for a tag push", func() {
+			req := webhookRequest("push", tagPayload("bborbe/repo", "v1.2.3"))
+			h.ServeHTTP(&httptest.ResponseRecorder{}, req)
+
+			Expect(metrics.IncWebhookSkippedCallCount()).To(Equal(0))
+		})
+
+		It("leaves the tag empty on a branch push", func() {
+			req := webhookRequest("push", pushPayload("bborbe/repo"))
+			h.ServeHTTP(&httptest.ResponseRecorder{}, req)
+
+			_, sentCmd := sender.SendCommandArgsForCall(0)
+			Expect(sentCmd.Tag).To(BeEmpty())
+		})
+
+		It("debounces on repo+tag, so a tag right after a branch push still dispatches", func() {
+			h.ServeHTTP(
+				&httptest.ResponseRecorder{},
+				webhookRequest("push", pushPayload("bborbe/repo")),
+			)
+			Expect(sender.SendCommandCallCount()).To(Equal(1))
+
+			h.ServeHTTP(
+				&httptest.ResponseRecorder{},
+				webhookRequest("push", tagPayload("bborbe/repo", "v1.2.3")),
+			)
+
+			Expect(sender.SendCommandCallCount()).To(Equal(2))
+			_, sentCmd := sender.SendCommandArgsForCall(1)
+			Expect(sentCmd.Tag).To(Equal("v1.2.3"))
+		})
+
+		It("debounces a repeated tag push for the same tag", func() {
+			h.ServeHTTP(
+				&httptest.ResponseRecorder{},
+				webhookRequest("push", tagPayload("bborbe/repo", "v1.2.3")),
+			)
+			h.ServeHTTP(
+				&httptest.ResponseRecorder{},
+				webhookRequest("push", tagPayload("bborbe/repo", "v1.2.3")),
+			)
+
+			Expect(sender.SendCommandCallCount()).To(Equal(1))
+			Expect(metrics.IncWebhookSkippedArgsForCall(0)).To(Equal("debounced"))
+		})
+
+		It("dispatches distinct tags of the same repo independently", func() {
+			h.ServeHTTP(
+				&httptest.ResponseRecorder{},
+				webhookRequest("push", tagPayload("bborbe/repo", "v1.2.3")),
+			)
+			h.ServeHTTP(
+				&httptest.ResponseRecorder{},
+				webhookRequest("push", tagPayload("bborbe/repo", "v1.2.4")),
+			)
+
+			Expect(sender.SendCommandCallCount()).To(Equal(2))
 		})
 	})
 })

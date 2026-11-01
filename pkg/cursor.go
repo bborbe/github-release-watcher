@@ -34,6 +34,13 @@ type Cursor struct {
 // RepoState is the cursor entry per repo.
 type RepoState struct {
 	LastSeenMasterSHA string `json:"last_seen_master_sha"`
+	// LastBuiltTag is the newest release tag the poll backstop has already
+	// dispatched a build for. It exists so the backstop stays silent on every
+	// cycle after the first: without it, each 10-minute pass would re-dispatch
+	// the same tag and inflate filter_skipped_total{reason="image_exists"} by
+	// one per repo per cycle, which reads as a problem and means nothing.
+	// Omitted when empty, so an existing cursor file loads unchanged.
+	LastBuiltTag string `json:"last_built_tag,omitempty"`
 }
 
 // LoadCursor reads cursor state from path.

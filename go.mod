@@ -12,6 +12,7 @@ require (
 	github.com/bborbe/cqrs v0.6.12
 	github.com/bborbe/errors v1.6.3
 	github.com/bborbe/http v1.26.30
+	github.com/bborbe/k8s v1.14.23
 	github.com/bborbe/kafka v1.28.5
 	github.com/bborbe/kv v1.21.19
 	github.com/bborbe/log v1.7.5
@@ -28,13 +29,14 @@ require (
 	github.com/onsi/ginkgo/v2 v2.33.1
 	github.com/onsi/gomega v1.44.0
 	github.com/prometheus/client_golang v1.25.0
+	k8s.io/api v0.38.0-alpha.2
+	sigs.k8s.io/yaml v1.6.0
 )
 
 require (
 	github.com/Masterminds/semver/v3 v3.5.0 // indirect
 	github.com/bborbe/argument/v2 v2.13.6 // indirect
 	github.com/bborbe/collection v1.21.3 // indirect
-	github.com/bborbe/k8s v1.14.23 // indirect
 	github.com/bborbe/math v1.4.15 // indirect
 	github.com/bborbe/strimzi v1.8.21 // indirect
 	github.com/bborbe/validation v1.5.5 // indirect
@@ -95,7 +97,6 @@ require (
 	gopkg.in/evanphx/json-patch.v4 v4.13.0 // indirect
 	gopkg.in/inf.v0 v0.9.1 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
-	k8s.io/api v0.38.0-alpha.2 // indirect
 	k8s.io/apiextensions-apiserver v0.38.0-alpha.2 // indirect
 	k8s.io/apimachinery v0.38.0-alpha.2 // indirect
 	k8s.io/client-go v0.38.0-alpha.2 // indirect
@@ -105,5 +106,4 @@ require (
 	sigs.k8s.io/json v0.0.0-20260909141634-11ed52e25bc5 // indirect
 	sigs.k8s.io/randfill v1.0.0 // indirect
 	sigs.k8s.io/structured-merge-diff/v7 v7.0.0 // indirect
-	sigs.k8s.io/yaml v1.6.0 // indirect
 )

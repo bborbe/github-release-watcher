@@ -46,6 +46,7 @@ var _ = Describe("CreateCommandConsumer", func() {
 			syncProducer,
 			db,
 			watcher,
+			new(mocks.BuildDispatcher),
 			base.TopicPrefix("develop"),
 		)
 		Expect(runFunc).NotTo(BeNil())

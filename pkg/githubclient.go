@@ -54,6 +54,30 @@ type GitHubClient interface {
 	// Other errors propagate.
 	GetChangelogContent(ctx context.Context, repo Repo) ([]byte, error)
 
+	// GetLatestReleaseTag returns the tag name of the repo's latest GitHub
+	// release, or "" when the repo has published none.
+	//
+	// This is the poll backstop's input: a missed tag-push webhook is
+	// recovered by asking GitHub what the newest release is, rather than by
+	// listing every tag (one API call instead of a paginated walk). The
+	// backstop's cursor entry keeps the call from re-dispatching a tag it has
+	// already handled.
+	GetLatestReleaseTag(ctx context.Context, repo Repo) (string, error)
+
+	// GetFileContent returns the raw bytes of path at ref. An empty ref means
+	// the repo's default branch.
+	//
+	// Returns (nil, nil) when the file does not exist (404) — absence is a
+	// normal answer for the optional files this watcher reads (`.maintainer.yaml`
+	// is the common case: most repos have none).
+	//
+	// Returns ErrRateLimited on primary or abuse rate-limit responses, and a
+	// wrapped error on every other failure including network errors, 5xx,
+	// oversize files (>1 MiB) and base64 decode failures. A caller that cannot
+	// tell "absent" from "unreachable" must not treat the error as absence —
+	// the build dispatch path fails closed on exactly this distinction.
+	GetFileContent(ctx context.Context, repo Repo, path, ref string) ([]byte, error)
+
 	// GetMaintainerConfig returns the parsed `.maintainer.yaml` document at
 	// HEAD of repo's default branch. The file is the trust gate for maintainer
 	// bots; a repo without it is treated as "not opted in" (zero-value config,
@@ -313,13 +337,42 @@ func (c *githubClient) GetMasterSHA(ctx context.Context, repo Repo) (string, err
 	return branch.GetCommit().GetSHA(), nil
 }
 
-func (c *githubClient) GetChangelogContent(ctx context.Context, repo Repo) ([]byte, error) {
-	opts := &gogithub.RepositoryContentGetOptions{Ref: repo.DefaultBranch}
+func (c *githubClient) GetLatestReleaseTag(ctx context.Context, repo Repo) (string, error) {
+	release, _, err := c.client.Repositories.GetLatestRelease(ctx, repo.Owner, repo.Name)
+	if err != nil {
+		var ghErr *gogithub.ErrorResponse
+		if stderrors.As(err, &ghErr) && ghErr.Response.StatusCode == http.StatusNotFound {
+			// No releases published (or none tagged) — nothing to back-fill.
+			return "", nil
+		}
+		if isRateLimitError(err) {
+			return "", ErrRateLimited
+		}
+		return "", errors.Wrapf(
+			ctx, err, "get latest release %s/%s", repo.Owner, repo.Name,
+		)
+	}
+	return release.GetTagName(), nil
+}
+
+// fileContent fetches one file's decoded bytes at ref, mapping 404 to
+// (nil, nil) and rate limits to ErrRateLimited.
+//
+// Every file read goes through here so the size cap, the 404 rule and the
+// rate-limit mapping cannot drift between callers: the build dispatch path
+// fails closed on the difference between "absent" and "could not read", and
+// that difference is decided exactly once, here.
+func (c *githubClient) fileContent(
+	ctx context.Context,
+	repo Repo,
+	path, ref string,
+) ([]byte, error) {
+	opts := &gogithub.RepositoryContentGetOptions{Ref: ref}
 	fileContent, _, _, err := c.client.Repositories.GetContents(
 		ctx,
 		repo.Owner,
 		repo.Name,
-		"CHANGELOG.md",
+		path,
 		opts,
 	)
 	if err != nil {
@@ -333,10 +386,11 @@ func (c *githubClient) GetChangelogContent(ctx context.Context, repo Repo) ([]by
 		return nil, errors.Wrapf(
 			ctx,
 			err,
-			"get CHANGELOG.md %s/%s@%s",
+			"get %s %s/%s@%s",
+			path,
 			repo.Owner,
 			repo.Name,
-			repo.DefaultBranch,
+			ref,
 		)
 	}
 	if fileContent == nil {
@@ -345,7 +399,8 @@ func (c *githubClient) GetChangelogContent(ctx context.Context, repo Repo) ([]by
 	if fileContent.GetSize() > 1024*1024 {
 		return nil, errors.Errorf(
 			ctx,
-			"CHANGELOG.md %s/%s too large: %d bytes (max 1 MiB)",
+			"%s %s/%s too large: %d bytes (max 1 MiB)",
+			path,
 			repo.Owner,
 			repo.Name,
 			fileContent.GetSize(),
@@ -353,13 +408,14 @@ func (c *githubClient) GetChangelogContent(ctx context.Context, repo Repo) ([]by
 	}
 	decoded, err := fileContent.GetContent()
 	if err != nil {
-		return nil, errors.Wrapf(ctx, err, "decode CHANGELOG.md %s/%s", repo.Owner, repo.Name)
+		return nil, errors.Wrapf(ctx, err, "decode %s %s/%s", path, repo.Owner, repo.Name)
 	}
 	// Enforce the limit on actual decoded content — API-reported Size is upstream metadata.
 	if len(decoded) > 1024*1024 {
 		return nil, errors.Errorf(
 			ctx,
-			"CHANGELOG.md %s/%s decoded content too large: %d bytes (max 1 MiB)",
+			"%s %s/%s decoded content too large: %d bytes (max 1 MiB)",
+			path,
 			repo.Owner,
 			repo.Name,
 			len(decoded),
@@ -368,58 +424,33 @@ func (c *githubClient) GetChangelogContent(ctx context.Context, repo Repo) ([]by
 	return []byte(decoded), nil
 }
 
+func (c *githubClient) GetFileContent(
+	ctx context.Context,
+	repo Repo,
+	path, ref string,
+) ([]byte, error) {
+	if ref == "" {
+		ref = repo.DefaultBranch
+	}
+	return c.fileContent(ctx, repo, path, ref)
+}
+
+func (c *githubClient) GetChangelogContent(ctx context.Context, repo Repo) ([]byte, error) {
+	return c.fileContent(ctx, repo, "CHANGELOG.md", repo.DefaultBranch)
+}
+
 func (c *githubClient) GetMaintainerConfig(
 	ctx context.Context,
 	repo Repo,
 ) (maintainerconfig.MaintainerConfig, error) {
-	opts := &gogithub.RepositoryContentGetOptions{Ref: repo.DefaultBranch}
-	fileContent, _, _, err := c.client.Repositories.GetContents(
-		ctx,
-		repo.Owner,
-		repo.Name,
-		".maintainer.yaml",
-		opts,
-	)
+	decoded, err := c.fileContent(ctx, repo, ".maintainer.yaml", repo.DefaultBranch)
 	if err != nil {
-		var ghErr *gogithub.ErrorResponse
-		if stderrors.As(err, &ghErr) && ghErr.Response.StatusCode == http.StatusNotFound {
-			return maintainerconfig.MaintainerConfig{}, nil
-		}
-		if isRateLimitError(err) {
-			return maintainerconfig.MaintainerConfig{}, ErrRateLimited
-		}
-		return maintainerconfig.MaintainerConfig{}, errors.Wrapf(
-			ctx,
-			err,
-			"get .maintainer.yaml %s/%s@%s",
-			repo.Owner,
-			repo.Name,
-			repo.DefaultBranch,
-		)
+		return maintainerconfig.MaintainerConfig{}, err
 	}
-	if fileContent == nil {
+	if decoded == nil {
 		return maintainerconfig.MaintainerConfig{}, nil
 	}
-	if fileContent.GetSize() > 1024*1024 {
-		return maintainerconfig.MaintainerConfig{}, errors.Errorf(
-			ctx,
-			".maintainer.yaml %s/%s too large: %d bytes (max 1 MiB)",
-			repo.Owner,
-			repo.Name,
-			fileContent.GetSize(),
-		)
-	}
-	decoded, err := fileContent.GetContent()
-	if err != nil {
-		return maintainerconfig.MaintainerConfig{}, errors.Wrapf(
-			ctx,
-			err,
-			"decode .maintainer.yaml %s/%s",
-			repo.Owner,
-			repo.Name,
-		)
-	}
-	cfg, err := maintainerconfig.Parse(ctx, []byte(decoded))
+	cfg, err := maintainerconfig.Parse(ctx, decoded)
 	if err != nil {
 		return maintainerconfig.MaintainerConfig{}, errors.Wrapf(
 			ctx,

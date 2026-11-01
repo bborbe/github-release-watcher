@@ -9,7 +9,6 @@ package main
 
 import (
 	"context"
-	"net/http"
 	"os"
 
 	task "github.com/bborbe/agent/command/task"
@@ -17,6 +16,7 @@ import (
 	"github.com/bborbe/errors"
 	"github.com/bborbe/github-release-watcher/pkg"
 	"github.com/bborbe/github-release-watcher/pkg/auth"
+	"github.com/bborbe/github-release-watcher/pkg/build"
 	"github.com/bborbe/github-release-watcher/pkg/factory"
 	"github.com/bborbe/github-release-watcher/pkg/filter"
 	libkafka "github.com/bborbe/kafka"
@@ -65,7 +65,7 @@ type Application struct {
 // WatcherFactory creates a Watcher. Matches factory.CreateWatcher's signature
 // exactly so tests can substitute a mock-returning closure.
 type WatcherFactory func(
-	httpClient *http.Client,
+	ghClient pkg.GitHubClient,
 	sender task.CreateCommandSender,
 	cursorPath string,
 	owner string,
@@ -74,6 +74,7 @@ type WatcherFactory func(
 	stage string,
 	targetVault string,
 	quotaMinRemaining int,
+	dispatcher build.Dispatcher,
 ) pkg.Watcher
 
 // ProducerFactory creates a Kafka sync producer. Matches
@@ -122,7 +123,7 @@ func (a *Application) Run(ctx context.Context, _ libsentry.Client) error {
 	staticFilters := factory.CreateStaticFilters(allowlist)
 
 	w := a.CreateWatcher(
-		httpClient,
+		pkg.NewGitHubClient(httpClient),
 		sender,
 		a.CursorPath,
 		a.Owner,
@@ -131,6 +132,9 @@ func (a *Application) Run(ctx context.Context, _ libsentry.Client) error {
 		a.Stage,
 		a.TargetVault,
 		a.QuotaMinRemaining,
+		// run-once is a local smoke test: no cluster, so no build dispatch and
+		// a no-op tag backstop.
+		nil,
 	)
 
 	if err := w.Poll(ctx, false, ""); err != nil {
