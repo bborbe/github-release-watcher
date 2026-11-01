@@ -29,6 +29,12 @@ const TriggerReleaseCheckCommandOperation base.CommandOperation = "trigger-relea
 type TriggerReleaseCheckCommand struct {
 	Scope string `json:"scope,omitempty"`
 	Force bool   `json:"force,omitempty"`
+	// Tag carries the bare tag name ("v1.2.3") when the cycle was triggered by
+	// a tag push (ref=refs/tags/<tag>). It is empty for branch pushes and for
+	// the /trigger full-scan path. A tag-only push carries an empty commits
+	// array, so the webhook path cannot express it as a release-file push; the
+	// tag is what makes the event classifiable downstream.
+	Tag string `json:"tag,omitempty"`
 }
 
 // Validate enforces the command's schema rules. The empty payload {} is

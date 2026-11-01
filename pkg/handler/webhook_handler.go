@@ -131,29 +131,8 @@ func (h *webhookHandler) ServeHTTP(
 		)
 	}
 
-	// Only pushes that touch a release-relevant file can change the release
-	// state (CHANGELOG.md bullets / .maintainer.yaml autoRelease). Anything
-	// else is acked and skipped — a repo whose autocommit daemon pushes
-	// obsidian-openclaw-style every few seconds but never touches these files
-	// now emits ZERO release-checks (the storm that exhausted the rate limit).
-	if !touchesReleaseFiles(payload) {
-		h.metrics.IncWebhookSkipped("no_release_files")
-		glog.V(2).Infof(
-			"webhook skipped repo=%s reason=no-release-files",
-			payload.Repository.FullName,
-		)
-		return writeWebhookAck(resp)
-	}
-
-	// Per-repo debounce: a burst of release-relevant pushes within the min
-	// interval collapses to one dispatch (the first check reads the latest
-	// state, so later pushes in the burst are covered).
-	if !h.debouncer.Allow(payload.Repository.FullName) {
-		h.metrics.IncWebhookSkipped("debounced")
-		glog.V(2).Infof(
-			"webhook skipped repo=%s reason=debounced",
-			payload.Repository.FullName,
-		)
+	tag, dispatch := h.classify(payload)
+	if !dispatch {
 		return writeWebhookAck(resp)
 	}
 
@@ -162,6 +141,7 @@ func (h *webhookHandler) ServeHTTP(
 	// not a full fleet scan.
 	if err := h.sender.SendCommand(ctx, command.TriggerReleaseCheckCommand{
 		Scope: payload.Repository.FullName,
+		Tag:   tag,
 	}); err != nil {
 		return libhttp.WrapWithStatusCode(
 			errors.Wrap(ctx, err, "send TriggerReleaseCheckCommand"),
@@ -177,6 +157,52 @@ func (h *webhookHandler) ServeHTTP(
 		payload.Ref,
 	)
 	return writeWebhookDispatched(resp)
+}
+
+// classify decides whether a parsed push delivery should publish a command and
+// returns the bare tag when it names one. It records the skip metric and log
+// line for every delivery it rejects, so ServeHTTP stays a thin transport shell.
+//
+// A tag push arrives as ref=refs/tags/<tag> with an EMPTY commits array, so the
+// release-file gate would drop every one of them with reason=no_release_files.
+// Tag pushes are the trigger for the build path ([[Release-to-Kaniko Build
+// Trigger Design]] § Decision 1), so they bypass that gate and carry the tag.
+//
+// Only branch pushes that touch a release-relevant file can change the release
+// state (CHANGELOG.md bullets / .maintainer.yaml autoRelease). Anything else is
+// acked and skipped — a repo whose autocommit daemon pushes
+// obsidian-openclaw-style every few seconds but never touches these files now
+// emits ZERO release-checks (the storm that exhausted the rate limit).
+//
+// Debounce is per repo for branch pushes. A tag push debounces on repo+tag
+// instead: a release cut lands seconds after the merge push that produced it,
+// and a repo-only key would swallow exactly the tag event the build path exists
+// to see.
+func (h *webhookHandler) classify(payload webhookPushEvent) (string, bool) {
+	tag, isTagPush := parseTagRef(payload.Ref)
+
+	if !isTagPush && !touchesReleaseFiles(payload) {
+		h.metrics.IncWebhookSkipped("no_release_files")
+		glog.V(2).Infof(
+			"webhook skipped repo=%s reason=no-release-files",
+			payload.Repository.FullName,
+		)
+		return "", false
+	}
+
+	debounceKey := payload.Repository.FullName
+	if isTagPush {
+		debounceKey = payload.Repository.FullName + "@" + tag
+	}
+	if !h.debouncer.Allow(debounceKey) {
+		h.metrics.IncWebhookSkipped("debounced")
+		glog.V(2).Infof(
+			"webhook skipped repo=%s reason=debounced",
+			payload.Repository.FullName,
+		)
+		return "", false
+	}
+	return tag, true
 }
 
 // webhookPushEvent is the subset of a GitHub push event the handler reads:
@@ -198,6 +224,23 @@ type webhookPushEvent struct {
 var releaseFiles = map[string]struct{}{
 	"CHANGELOG.md":     {},
 	".maintainer.yaml": {},
+}
+
+// tagRefPrefix is the ref prefix GitHub uses for tag pushes.
+const tagRefPrefix = "refs/tags/"
+
+// parseTagRef reports whether ref names a tag and, if so, the bare tag
+// ("v1.2.3" for "refs/tags/v1.2.3"). A branch ref, an empty ref, or the bare
+// "refs/tags/" prefix with no tag returns false.
+func parseTagRef(ref string) (string, bool) {
+	if !strings.HasPrefix(ref, tagRefPrefix) {
+		return "", false
+	}
+	tag := strings.TrimPrefix(ref, tagRefPrefix)
+	if tag == "" {
+		return "", false
+	}
+	return tag, true
 }
 
 // touchesReleaseFiles reports whether any commit in the push touched a
