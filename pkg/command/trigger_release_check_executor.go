@@ -11,6 +11,7 @@ import (
 	cdb "github.com/bborbe/cqrs/cdb"
 	"github.com/bborbe/errors"
 	"github.com/bborbe/github-release-watcher/pkg"
+	"github.com/bborbe/github-release-watcher/pkg/build"
 	libkv "github.com/bborbe/kv"
 	"github.com/golang/glog"
 )
@@ -38,12 +39,13 @@ import (
 // filter UX is a separate spec).
 func NewTriggerReleaseCheckCommandExecutor(
 	watcher pkg.Watcher,
+	dispatcher build.Dispatcher,
 ) cdb.CommandObjectExecutorTx {
 	return cdb.CommandObjectExecutorTxFunc(
 		TriggerReleaseCheckCommandOperation,
 		false, // SendResultEnabled = false
 		func(ctx context.Context, tx libkv.Tx, commandObject cdb.CommandObject) (*base.EventID, base.Event, error) {
-			return runTriggerReleaseCheck(ctx, tx, commandObject, watcher)
+			return runTriggerReleaseCheck(ctx, tx, commandObject, watcher, dispatcher)
 		},
 	)
 }
@@ -64,10 +66,26 @@ func runTriggerReleaseCheck(
 	_ libkv.Tx,
 	commandObject cdb.CommandObject,
 	watcher pkg.Watcher,
+	dispatcher build.Dispatcher,
 ) (*base.EventID, base.Event, error) {
 	cmd, err := unmarshalAndValidate(ctx, commandObject)
 	if err != nil {
 		return nil, nil, err
+	}
+	// A tag push carries the tag, and a tag is the release-to-image trigger
+	// ([[Release-to-Kaniko Build Trigger Design]] § Decision 1). The release
+	// check still runs below: the tag is what the build path needs, not a
+	// replacement for the release-check cycle the same repo may still owe.
+	if cmd.Tag != "" {
+		if err := dispatcher.Dispatch(
+			ctx,
+			build.Request{Repo: cmd.Scope, Tag: cmd.Tag},
+			build.TriggerWebhook,
+		); err != nil {
+			return nil, nil, errors.Wrapf(
+				ctx, err, "dispatch build repo=%q tag=%q", cmd.Scope, cmd.Tag,
+			)
+		}
 	}
 	if err := watcher.Poll(ctx, cmd.Force, cmd.Scope); err != nil {
 		// Transient: rate-limited, GitHub 5xx, cursor read error, etc.

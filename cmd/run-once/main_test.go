@@ -11,7 +11,6 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	stderrors "errors"
-	"net/http"
 	"testing"
 	"time"
 
@@ -80,7 +79,7 @@ var _ = Describe("Run", func() {
 
 	watcherMockFactory := func() runonce.WatcherFactory {
 		return func(
-			_ *http.Client,
+			_ pkg.GitHubClient,
 			_ task.CreateCommandSender,
 			_ string,
 			_ string,

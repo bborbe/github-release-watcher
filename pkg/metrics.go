@@ -20,8 +20,21 @@ type Metrics interface {
 	// IncReposScanned — increment by N repos scanned in the cycle (cardinality: none).
 	IncReposScanned(n int)
 
-	// IncFilterSkipped — reason: "empty_unreleased" | "auto_release" | "sha_unchanged" | "scope" | "fork"
+	// IncFilterSkipped — reason: "empty_unreleased" | "auto_release" | "sha_unchanged" | "scope" | "fork" | "image_exists" | "registry_unreachable"
+	//
+	// The last two are the build dispatch's pre-flight, per
+	// [[Release-to-Kaniko Build Trigger Design]] § Decision 4: "image_exists"
+	// means the tag is already published (skip), "registry_unreachable" means
+	// the check itself failed and the dispatch was skipped fail-closed. Sharing
+	// one counter keeps "what did the watcher skip and why" answerable with a
+	// single query across the poll filters and the build path.
 	IncFilterSkipped(reason string)
+
+	// IncBuildDispatched — result: "created" | "exists" | "skipped" | "error"
+	//
+	// "exists" is the idempotency path (the Job already existed because the
+	// webhook and the poll backstop saw the same tag), not a failure.
+	IncBuildDispatched(result string)
 
 	// IncWebhookDelivery increments the webhook delivery counter with the given result label.
 	// result: "success", "skip"
@@ -53,7 +66,28 @@ func NewMetrics(registerer prometheus.Registerer) Metrics {
 	if registerer == nil {
 		registerer = prometheus.DefaultRegisterer
 	}
-	m := &prometheusMetrics{
+	m := newPrometheusMetrics()
+	registerer.MustRegister(
+		m.pollCycleTotal,
+		m.publishedTotal,
+		m.reposScannedTotal,
+		m.filterSkippedTotal,
+		m.webhookDeliveriesTotal,
+		m.webhookSignatureRejectionsTotal,
+		m.webhookDispatchLatencySeconds,
+		m.webhookSkippedTotal,
+		m.buildDispatchedTotal,
+		m.rateLimitRemaining,
+	)
+	m.preInitialise()
+	return m
+}
+
+// newPrometheusMetrics constructs every collector. Split out of NewMetrics so
+// the constructor stays readable as the list grows — this function is the
+// declaration list, NewMetrics is the registration contract.
+func newPrometheusMetrics() *prometheusMetrics {
+	return &prometheusMetrics{
 		pollCycleTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Namespace: metricNamespace,
 			Name:      "poll_cycle_total",
@@ -95,31 +129,37 @@ func NewMetrics(registerer prometheus.Registerer) Metrics {
 			Name:      "webhook_skipped_total",
 			Help:      "Total GitHub webhook push deliveries skipped by reason.",
 		}, []string{"reason"}),
+		buildDispatchedTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Namespace: metricNamespace,
+			Name:      "build_dispatched_total",
+			Help:      "Total build dispatch attempts by result.",
+		}, []string{"result"}),
 		rateLimitRemaining: prometheus.NewGauge(prometheus.GaugeOpts{
 			Namespace: metricNamespace,
 			Name:      "rate_limit_remaining",
 			Help:      "Requests remaining in the GitHub primary rate-limit window (shared App token). Zero until the first API response populates it.",
 		}),
 	}
-	registerer.MustRegister(
-		m.pollCycleTotal,
-		m.publishedTotal,
-		m.reposScannedTotal,
-		m.filterSkippedTotal,
-		m.webhookDeliveriesTotal,
-		m.webhookSignatureRejectionsTotal,
-		m.webhookDispatchLatencySeconds,
-		m.webhookSkippedTotal,
-		m.rateLimitRemaining,
-	)
+}
+
+// preInitialise exposes a zero series for every label combination before the
+// first event fires, so an alert on "no builds dispatched" can distinguish
+// zero from "the series does not exist yet".
+func (m *prometheusMetrics) preInitialise() {
 	for _, r := range []string{"success", "rate_limited", "github_error", "quota_low"} {
 		m.pollCycleTotal.WithLabelValues(r).Add(0)
 	}
 	for _, s := range []string{"create", "error"} {
 		m.publishedTotal.WithLabelValues(s).Add(0)
 	}
-	for _, r := range []string{"empty_unreleased", "auto_release", "sha_unchanged", "scope", "fork"} {
+	for _, r := range []string{
+		"empty_unreleased", "auto_release", "sha_unchanged", "scope", "fork",
+		"image_exists", "registry_unreachable",
+	} {
 		m.filterSkippedTotal.WithLabelValues(r).Add(0)
+	}
+	for _, r := range []string{"created", "exists", "skipped", "error"} {
+		m.buildDispatchedTotal.WithLabelValues(r).Add(0)
 	}
 	for _, r := range []string{"success", "skip"} {
 		m.webhookDeliveriesTotal.WithLabelValues(r).Add(0)
@@ -127,7 +167,6 @@ func NewMetrics(registerer prometheus.Registerer) Metrics {
 	for _, r := range []string{"no_release_files", "debounced"} {
 		m.webhookSkippedTotal.WithLabelValues(r).Add(0)
 	}
-	return m
 }
 
 type prometheusMetrics struct {
@@ -140,6 +179,7 @@ type prometheusMetrics struct {
 	webhookSignatureRejectionsTotal prometheus.Counter
 	webhookDispatchLatencySeconds   prometheus.Histogram
 	webhookSkippedTotal             *prometheus.CounterVec
+	buildDispatchedTotal            *prometheus.CounterVec
 	rateLimitRemaining              prometheus.Gauge
 }
 
@@ -157,6 +197,10 @@ func (m *prometheusMetrics) IncReposScanned(n int) {
 
 func (m *prometheusMetrics) IncFilterSkipped(reason string) {
 	m.filterSkippedTotal.WithLabelValues(reason).Inc()
+}
+
+func (m *prometheusMetrics) IncBuildDispatched(result string) {
+	m.buildDispatchedTotal.WithLabelValues(result).Inc()
 }
 
 func (m *prometheusMetrics) IncWebhookDelivery(result string) {

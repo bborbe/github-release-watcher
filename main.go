@@ -25,6 +25,7 @@ import (
 	"github.com/bborbe/github-release-watcher/pkg/factory"
 	"github.com/bborbe/github-release-watcher/pkg/filter"
 	libhttp "github.com/bborbe/http"
+	libk8s "github.com/bborbe/k8s"
 	libkafka "github.com/bborbe/kafka"
 	"github.com/bborbe/run"
 	libsentry "github.com/bborbe/sentry"
@@ -115,8 +116,10 @@ func (a *application) Run(ctx context.Context, _ libsentry.Client) error {
 	sender := factory.CreateKafkaSender(syncProducer, a.TopicPrefix)
 	staticFilters := factory.CreateStaticFilters(allowlist)
 
+	ghClient := pkg.NewGitHubClient(httpClient)
+
 	w := factory.CreateWatcher(
-		httpClient,
+		ghClient,
 		sender,
 		a.CursorPath,
 		a.Owner,
@@ -152,6 +155,21 @@ func (a *application) Run(ctx context.Context, _ libsentry.Client) error {
 	// session-scoped offset store — replays the request topic from OffsetOldest
 	// on pod restart; safe because the downstream CreateTaskCommand is idempotent
 	// via the derived task_id.
+	// Build dispatch: a release-tag push creates a build Job in-cluster. The
+	// clientset is resolved from the pod's service account — a failure here is
+	// fatal on purpose: a watcher that silently cannot build would accept tag
+	// pushes and drop them, which is indistinguishable from "nothing to do".
+	clientset, err := libk8s.CreateClientset("")
+	if err != nil {
+		return errors.Wrap(ctx, err, "create kubernetes clientset")
+	}
+	dispatcher := factory.CreateBuildDispatcher(
+		ghClient,
+		libk8s.NewJobDeployer(clientset),
+		httpClient,
+		metrics,
+	)
+
 	saramaClientProvider := libkafka.NewSaramaClientProviderNew(a.KafkaBrokers)
 	db := pkg.NewMemDB()
 	commandConsumer := factory.CreateCommandConsumer(
@@ -159,6 +177,7 @@ func (a *application) Run(ctx context.Context, _ libsentry.Client) error {
 		syncProducer,
 		db,
 		w, // shared with the poll-interval loop
+		dispatcher,
 		a.TopicPrefix,
 	)
 

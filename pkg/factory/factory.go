@@ -15,9 +15,11 @@ import (
 	"github.com/bborbe/cqrs/cdb"
 	cqrsiam "github.com/bborbe/cqrs/iam"
 	"github.com/bborbe/github-release-watcher/pkg"
+	"github.com/bborbe/github-release-watcher/pkg/build"
 	"github.com/bborbe/github-release-watcher/pkg/command"
 	"github.com/bborbe/github-release-watcher/pkg/filter"
 	"github.com/bborbe/github-release-watcher/pkg/handler"
+	libk8s "github.com/bborbe/k8s"
 	libkafka "github.com/bborbe/kafka"
 	libkv "github.com/bborbe/kv"
 	"github.com/bborbe/log"
@@ -62,7 +64,7 @@ func CreateStaticFilters(allowlist []string) filter.TaskCreationFilter {
 // Reference: watcher/github-pr/pkg/factory/factory.go follows the same
 // no-I/O-in-factory pattern.
 func CreateWatcher(
-	httpClient *http.Client,
+	ghClient pkg.GitHubClient,
 	sender task.CreateCommandSender,
 	cursorPath string,
 	owner string,
@@ -72,7 +74,6 @@ func CreateWatcher(
 	targetVault string,
 	quotaMinRemaining int,
 ) pkg.Watcher {
-	ghClient := pkg.NewGitHubClient(httpClient)
 	publisher := pkg.NewTaskPublisher(
 		sender,
 		metrics,
@@ -140,6 +141,31 @@ func CreateWebhookHandler(
 	)
 }
 
+// CreateBuildDispatcher wires the release-tag → build-Job dispatch pipeline.
+//
+// The GitHub client is shared with the watcher rather than constructed here:
+// both read the same repos through the same installation token, and a second
+// client would wrap the same http.Client's transport a second time — nesting
+// the rate-capturing/logging round tripper and emitting every non-2xx line
+// twice, which is exactly the diagnostic the transport exists to provide.
+//
+// The registry checker gets the bare http.Client: registry requests carry no
+// GitHub credentials and must not be wrapped by the rate-capturing transport.
+func CreateBuildDispatcher(
+	ghClient pkg.GitHubClient,
+	jobDeployer libk8s.JobDeployer,
+	httpClient *http.Client,
+	metrics pkg.Metrics,
+) build.Dispatcher {
+	return build.NewDispatcher(
+		pkg.NewBuildManifestLoader(ghClient),
+		pkg.NewBuildJobCreator(jobDeployer),
+		build.NewRegistryImageChecker(httpClient),
+		build.NewAutoBuildGate(pkg.NewBuildFileFetcher(ghClient)),
+		metrics,
+	)
+}
+
 // CreateCommandConsumer wires a run.Func that consumes TriggerReleaseCheckCommand
 // messages from the github-release watcher's request topic and runs them through
 // the shared Watcher.Poll(ctx) pipeline.
@@ -153,10 +179,11 @@ func CreateCommandConsumer(
 	syncProducer libkafka.SyncProducer,
 	db libkv.DB,
 	watcher pkg.Watcher,
+	dispatcher build.Dispatcher,
 	topicPrefix base.TopicPrefix,
 ) run.Func {
 	executors := cdb.CommandObjectExecutorTxs{
-		command.NewTriggerReleaseCheckCommandExecutor(watcher),
+		command.NewTriggerReleaseCheckCommandExecutor(watcher, dispatcher),
 	}
 	return cdb.RunCommandConsumerTxDefault(
 		saramaClientProvider,

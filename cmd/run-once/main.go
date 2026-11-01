@@ -9,7 +9,6 @@ package main
 
 import (
 	"context"
-	"net/http"
 	"os"
 
 	task "github.com/bborbe/agent/command/task"
@@ -65,7 +64,7 @@ type Application struct {
 // WatcherFactory creates a Watcher. Matches factory.CreateWatcher's signature
 // exactly so tests can substitute a mock-returning closure.
 type WatcherFactory func(
-	httpClient *http.Client,
+	ghClient pkg.GitHubClient,
 	sender task.CreateCommandSender,
 	cursorPath string,
 	owner string,
@@ -122,7 +121,7 @@ func (a *Application) Run(ctx context.Context, _ libsentry.Client) error {
 	staticFilters := factory.CreateStaticFilters(allowlist)
 
 	w := a.CreateWatcher(
-		httpClient,
+		pkg.NewGitHubClient(httpClient),
 		sender,
 		a.CursorPath,
 		a.Owner,

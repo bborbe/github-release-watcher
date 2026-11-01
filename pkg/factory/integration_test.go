@@ -74,7 +74,10 @@ var _ = Describe("end-to-end command flow through wired executor (spec 067 AC 8 
 		ctx = context.Background()
 		watcher = new(mocks.Watcher)
 
-		executor = command.NewTriggerReleaseCheckCommandExecutor(watcher)
+		executor = command.NewTriggerReleaseCheckCommandExecutor(
+			watcher,
+			new(mocks.BuildDispatcher),
+		)
 	})
 
 	newCommandObject := func() cdb.CommandObject {
@@ -101,6 +104,7 @@ var _ = Describe("end-to-end command flow through wired executor (spec 067 AC 8 
 				new(libkafkamocks.KafkaSyncProducer),
 				new(kvmocks.DB),
 				watcher,
+				new(mocks.BuildDispatcher),
 				base.TopicPrefix("develop"),
 			)
 			Expect(runFunc).NotTo(BeNil(),
