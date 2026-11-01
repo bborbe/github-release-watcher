@@ -43,6 +43,20 @@ type GitHubClient struct {
 		result1 []byte
 		result2 error
 	}
+	GetLatestReleaseTagStub        func(context.Context, pkg.Repo) (string, error)
+	getLatestReleaseTagMutex       sync.RWMutex
+	getLatestReleaseTagArgsForCall []struct {
+		arg1 context.Context
+		arg2 pkg.Repo
+	}
+	getLatestReleaseTagReturns struct {
+		result1 string
+		result2 error
+	}
+	getLatestReleaseTagReturnsOnCall map[int]struct {
+		result1 string
+		result2 error
+	}
 	GetMaintainerConfigStub        func(context.Context, pkg.Repo) (maintainerconfig.MaintainerConfig, error)
 	getMaintainerConfigMutex       sync.RWMutex
 	getMaintainerConfigArgsForCall []struct {
@@ -227,6 +241,71 @@ func (fake *GitHubClient) GetFileContentReturnsOnCall(i int, result1 []byte, res
 	}
 	fake.getFileContentReturnsOnCall[i] = struct {
 		result1 []byte
+		result2 error
+	}{result1, result2}
+}
+
+func (fake *GitHubClient) GetLatestReleaseTag(arg1 context.Context, arg2 pkg.Repo) (string, error) {
+	fake.getLatestReleaseTagMutex.Lock()
+	ret, specificReturn := fake.getLatestReleaseTagReturnsOnCall[len(fake.getLatestReleaseTagArgsForCall)]
+	fake.getLatestReleaseTagArgsForCall = append(fake.getLatestReleaseTagArgsForCall, struct {
+		arg1 context.Context
+		arg2 pkg.Repo
+	}{arg1, arg2})
+	stub := fake.GetLatestReleaseTagStub
+	fakeReturns := fake.getLatestReleaseTagReturns
+	fake.recordInvocation("GetLatestReleaseTag", []interface{}{arg1, arg2})
+	fake.getLatestReleaseTagMutex.Unlock()
+	if stub != nil {
+		return stub(arg1, arg2)
+	}
+	if specificReturn {
+		return ret.result1, ret.result2
+	}
+	return fakeReturns.result1, fakeReturns.result2
+}
+
+func (fake *GitHubClient) GetLatestReleaseTagCallCount() int {
+	fake.getLatestReleaseTagMutex.RLock()
+	defer fake.getLatestReleaseTagMutex.RUnlock()
+	return len(fake.getLatestReleaseTagArgsForCall)
+}
+
+func (fake *GitHubClient) GetLatestReleaseTagCalls(stub func(context.Context, pkg.Repo) (string, error)) {
+	fake.getLatestReleaseTagMutex.Lock()
+	defer fake.getLatestReleaseTagMutex.Unlock()
+	fake.GetLatestReleaseTagStub = stub
+}
+
+func (fake *GitHubClient) GetLatestReleaseTagArgsForCall(i int) (context.Context, pkg.Repo) {
+	fake.getLatestReleaseTagMutex.RLock()
+	defer fake.getLatestReleaseTagMutex.RUnlock()
+	argsForCall := fake.getLatestReleaseTagArgsForCall[i]
+	return argsForCall.arg1, argsForCall.arg2
+}
+
+func (fake *GitHubClient) GetLatestReleaseTagReturns(result1 string, result2 error) {
+	fake.getLatestReleaseTagMutex.Lock()
+	defer fake.getLatestReleaseTagMutex.Unlock()
+	fake.GetLatestReleaseTagStub = nil
+	fake.getLatestReleaseTagReturns = struct {
+		result1 string
+		result2 error
+	}{result1, result2}
+}
+
+func (fake *GitHubClient) GetLatestReleaseTagReturnsOnCall(i int, result1 string, result2 error) {
+	fake.getLatestReleaseTagMutex.Lock()
+	defer fake.getLatestReleaseTagMutex.Unlock()
+	fake.GetLatestReleaseTagStub = nil
+	if fake.getLatestReleaseTagReturnsOnCall == nil {
+		fake.getLatestReleaseTagReturnsOnCall = make(map[int]struct {
+			result1 string
+			result2 error
+		})
+	}
+	fake.getLatestReleaseTagReturnsOnCall[i] = struct {
+		result1 string
 		result2 error
 	}{result1, result2}
 }

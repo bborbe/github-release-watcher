@@ -118,6 +118,21 @@ func (a *application) Run(ctx context.Context, _ libsentry.Client) error {
 
 	ghClient := pkg.NewGitHubClient(httpClient)
 
+	// Build dispatch: a release-tag push creates a build Job in-cluster. The
+	// clientset is resolved from the pod's service account — a failure here is
+	// fatal on purpose: a watcher that silently cannot build would accept tag
+	// pushes and drop them, which is indistinguishable from "nothing to do".
+	clientset, err := libk8s.CreateClientset("")
+	if err != nil {
+		return errors.Wrap(ctx, err, "create kubernetes clientset")
+	}
+	dispatcher := factory.CreateBuildDispatcher(
+		ghClient,
+		libk8s.NewJobDeployer(clientset),
+		httpClient,
+		metrics,
+	)
+
 	w := factory.CreateWatcher(
 		ghClient,
 		sender,
@@ -128,6 +143,7 @@ func (a *application) Run(ctx context.Context, _ libsentry.Client) error {
 		a.Stage,
 		a.TargetVault,
 		a.QuotaMinRemaining,
+		dispatcher,
 	)
 
 	// HTTP-side sender backs the /trigger handler.
@@ -155,21 +171,6 @@ func (a *application) Run(ctx context.Context, _ libsentry.Client) error {
 	// session-scoped offset store — replays the request topic from OffsetOldest
 	// on pod restart; safe because the downstream CreateTaskCommand is idempotent
 	// via the derived task_id.
-	// Build dispatch: a release-tag push creates a build Job in-cluster. The
-	// clientset is resolved from the pod's service account — a failure here is
-	// fatal on purpose: a watcher that silently cannot build would accept tag
-	// pushes and drop them, which is indistinguishable from "nothing to do".
-	clientset, err := libk8s.CreateClientset("")
-	if err != nil {
-		return errors.Wrap(ctx, err, "create kubernetes clientset")
-	}
-	dispatcher := factory.CreateBuildDispatcher(
-		ghClient,
-		libk8s.NewJobDeployer(clientset),
-		httpClient,
-		metrics,
-	)
-
 	saramaClientProvider := libkafka.NewSaramaClientProviderNew(a.KafkaBrokers)
 	db := pkg.NewMemDB()
 	commandConsumer := factory.CreateCommandConsumer(

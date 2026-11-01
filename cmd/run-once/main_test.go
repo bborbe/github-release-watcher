@@ -20,6 +20,7 @@ import (
 	runonce "github.com/bborbe/github-release-watcher/cmd/run-once"
 	"github.com/bborbe/github-release-watcher/mocks"
 	"github.com/bborbe/github-release-watcher/pkg"
+	"github.com/bborbe/github-release-watcher/pkg/build"
 	"github.com/bborbe/github-release-watcher/pkg/filter"
 	libkafka "github.com/bborbe/kafka"
 	. "github.com/onsi/ginkgo/v2"
@@ -88,6 +89,7 @@ var _ = Describe("Run", func() {
 			_ string,
 			targetVault string,
 			_ int,
+			_ build.Dispatcher,
 		) pkg.Watcher {
 			capturedTargetVault = targetVault
 			return watcherMock

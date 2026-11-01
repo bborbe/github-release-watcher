@@ -54,6 +54,16 @@ type GitHubClient interface {
 	// Other errors propagate.
 	GetChangelogContent(ctx context.Context, repo Repo) ([]byte, error)
 
+	// GetLatestReleaseTag returns the tag name of the repo's latest GitHub
+	// release, or "" when the repo has published none.
+	//
+	// This is the poll backstop's input: a missed tag-push webhook is
+	// recovered by asking GitHub what the newest release is, rather than by
+	// listing every tag (one API call instead of a paginated walk). The
+	// backstop's cursor entry keeps the call from re-dispatching a tag it has
+	// already handled.
+	GetLatestReleaseTag(ctx context.Context, repo Repo) (string, error)
+
 	// GetFileContent returns the raw bytes of path at ref. An empty ref means
 	// the repo's default branch.
 	//
@@ -325,6 +335,24 @@ func (c *githubClient) GetMasterSHA(ctx context.Context, repo Repo) (string, err
 		)
 	}
 	return branch.GetCommit().GetSHA(), nil
+}
+
+func (c *githubClient) GetLatestReleaseTag(ctx context.Context, repo Repo) (string, error) {
+	release, _, err := c.client.Repositories.GetLatestRelease(ctx, repo.Owner, repo.Name)
+	if err != nil {
+		var ghErr *gogithub.ErrorResponse
+		if stderrors.As(err, &ghErr) && ghErr.Response.StatusCode == http.StatusNotFound {
+			// No releases published (or none tagged) — nothing to back-fill.
+			return "", nil
+		}
+		if isRateLimitError(err) {
+			return "", ErrRateLimited
+		}
+		return "", errors.Wrapf(
+			ctx, err, "get latest release %s/%s", repo.Owner, repo.Name,
+		)
+	}
+	return release.GetTagName(), nil
 }
 
 // fileContent fetches one file's decoded bytes at ref, mapping 404 to

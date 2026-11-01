@@ -73,6 +73,7 @@ func CreateWatcher(
 	stage string,
 	targetVault string,
 	quotaMinRemaining int,
+	dispatcher build.Dispatcher,
 ) pkg.Watcher {
 	publisher := pkg.NewTaskPublisher(
 		sender,
@@ -87,6 +88,7 @@ func CreateWatcher(
 		owner,
 		taskCreationFilter,
 		quotaMinRemaining,
+		pkg.NewTagBackstop(ghClient, dispatcher),
 	)
 }
 

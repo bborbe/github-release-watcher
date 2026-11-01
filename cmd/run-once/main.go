@@ -16,6 +16,7 @@ import (
 	"github.com/bborbe/errors"
 	"github.com/bborbe/github-release-watcher/pkg"
 	"github.com/bborbe/github-release-watcher/pkg/auth"
+	"github.com/bborbe/github-release-watcher/pkg/build"
 	"github.com/bborbe/github-release-watcher/pkg/factory"
 	"github.com/bborbe/github-release-watcher/pkg/filter"
 	libkafka "github.com/bborbe/kafka"
@@ -73,6 +74,7 @@ type WatcherFactory func(
 	stage string,
 	targetVault string,
 	quotaMinRemaining int,
+	dispatcher build.Dispatcher,
 ) pkg.Watcher
 
 // ProducerFactory creates a Kafka sync producer. Matches
@@ -130,6 +132,9 @@ func (a *Application) Run(ctx context.Context, _ libsentry.Client) error {
 		a.Stage,
 		a.TargetVault,
 		a.QuotaMinRemaining,
+		// run-once is a local smoke test: no cluster, so no build dispatch and
+		// a no-op tag backstop.
+		nil,
 	)
 
 	if err := w.Poll(ctx, false, ""); err != nil {
