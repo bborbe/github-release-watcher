@@ -64,6 +64,17 @@ type GitHubClient interface {
 	// already handled.
 	GetLatestReleaseTag(ctx context.Context, repo Repo) (string, error)
 
+	// GetCommitEpoch returns the committer date, in Unix seconds, of the commit
+	// the given ref resolves to.
+	//
+	// It feeds the build template's __SOURCE_DATE_EPOCH__, which the build
+	// container compares against the cloned commit and refuses to run on a
+	// mismatch. Committer date, not author date — an amended or rebased commit
+	// carries an author date that can differ from the object's own timestamp.
+	// A ref that is an annotated tag resolves through to its commit, matching
+	// `git log -1 --format=%ct <ref>`.
+	GetCommitEpoch(ctx context.Context, repo Repo, ref string) (int64, error)
+
 	// GetFileContent returns the raw bytes of path at ref. An empty ref means
 	// the repo's default branch.
 	//
@@ -353,6 +364,29 @@ func (c *githubClient) GetLatestReleaseTag(ctx context.Context, repo Repo) (stri
 		)
 	}
 	return release.GetTagName(), nil
+}
+
+// GetCommitEpoch returns the committer date of the commit ref resolves to.
+func (c *githubClient) GetCommitEpoch(
+	ctx context.Context,
+	repo Repo,
+	ref string,
+) (int64, error) {
+	commit, _, err := c.client.Repositories.GetCommit(ctx, repo.Owner, repo.Name, ref, nil)
+	if err != nil {
+		if isRateLimitError(err) {
+			return 0, ErrRateLimited
+		}
+		return 0, errors.Wrapf(
+			ctx, err, "get commit %s/%s@%s", repo.Owner, repo.Name, ref,
+		)
+	}
+	if commit.GetCommit().GetCommitter().GetDate().IsZero() {
+		return 0, errors.Errorf(
+			ctx, "commit %s/%s@%s has no committer date", repo.Owner, repo.Name, ref,
+		)
+	}
+	return commit.GetCommit().GetCommitter().GetDate().Unix(), nil
 }
 
 // fileContent fetches one file's decoded bytes at ref, mapping 404 to

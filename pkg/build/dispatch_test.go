@@ -14,28 +14,32 @@ import (
 	. "github.com/onsi/gomega"
 )
 
-// buildJobManifest is a minimal in-repo build recipe in the shape the
-// dispatcher expects: a Job whose image carries the tag placeholder.
+// buildJobManifest is a minimal in-repo build recipe in the canonical dialect.
 const buildJobManifest = `apiVersion: batch/v1
 kind: Job
 metadata:
-  name: ignored-by-the-dispatcher
+  name: __JOB_NAME__
+  namespace: build
+  annotations:
+    build.benjamin-borbe.de/service: __SERVICE_PATH__
 spec:
   template:
     spec:
       containers:
         - name: build
-          image: docker.io/bborbe/example:${TAG}
+          image: __IMAGE__:__TAG__
       restartPolicy: Never
 `
 
 var _ = Describe("Dispatcher", func() {
 	var (
 		ctx        context.Context
-		gate       *mocks.BuildAutoBuildGate
+		configs    *mocks.BuildConfigProvider
 		manifests  *mocks.BuildManifestLoader
 		images     *mocks.BuildImageChecker
 		jobs       *mocks.BuildJobCreator
+		epochs     *mocks.BuildCommitEpochProvider
+		active     *mocks.BuildJobLister
 		metrics    *mocks.BuildMetrics
 		dispatcher build.Dispatcher
 		req        build.Request
@@ -43,17 +47,34 @@ var _ = Describe("Dispatcher", func() {
 
 	BeforeEach(func() {
 		ctx = context.Background()
-		gate = new(mocks.BuildAutoBuildGate)
+		configs = new(mocks.BuildConfigProvider)
 		manifests = new(mocks.BuildManifestLoader)
 		images = new(mocks.BuildImageChecker)
 		jobs = new(mocks.BuildJobCreator)
+		epochs = new(mocks.BuildCommitEpochProvider)
+		active = new(mocks.BuildJobLister)
 		metrics = new(mocks.BuildMetrics)
-		dispatcher = build.NewDispatcher(manifests, jobs, images, gate, metrics)
+		dispatcher = build.NewDispatcher(build.Deps{
+			Manifests:  manifests,
+			Jobs:       jobs,
+			Images:     images,
+			Configs:    configs,
+			Epochs:     epochs,
+			ActiveJobs: active,
+			Metrics:    metrics,
+		})
 		req = build.Request{Repo: "bborbe/example", Tag: "v1.2.3"}
 
-		gate.EnabledReturns(true, nil)
+		configs.ConfigReturns(build.BuildConfig{
+			AutoBuild:       true,
+			Destinations:    []string{"docker.io/bborbe/example"},
+			PushSecret:      "registry-secret",
+			DeadlineSeconds: 900,
+		}, nil)
 		manifests.LoadBuildJobManifestReturns([]byte(buildJobManifest), nil)
 		images.ExistsReturns(false, nil)
+		epochs.CommitEpochReturns(1767225600, nil)
+		active.ActiveByTagReturns(nil, nil)
 		jobs.CreateReturns(nil)
 	})
 
@@ -62,11 +83,20 @@ var _ = Describe("Dispatcher", func() {
 
 		Expect(jobs.CreateCallCount()).To(Equal(1))
 		_, job := jobs.CreateArgsForCall(0)
-		Expect(job.Name).To(Equal(build.JobName("bborbe/example", "v1.2.3")))
+		Expect(job.Name).To(HavePrefix("build-example-v1-2-3-"))
 		Expect(job.Namespace).To(Equal("build"))
 		Expect(build.JobImage(job)).To(Equal("docker.io/bborbe/example:v1.2.3"))
-
 		Expect(metrics.IncBuildDispatchedArgsForCall(0)).To(Equal("created"))
+	})
+
+	It("resolves the commit epoch for the ref being built", func() {
+		// __SOURCE_DATE_EPOCH__ is validated inside the build container against
+		// the cloned commit, so it must come from the ref, not from now().
+		Expect(dispatcher.Dispatch(ctx, req, build.TriggerWebhook)).To(Succeed())
+
+		_, repo, ref := epochs.CommitEpochArgsForCall(0)
+		Expect(repo).To(Equal("bborbe/example"))
+		Expect(ref).To(Equal("refs/tags/v1.2.3"))
 	})
 
 	It("reads the manifest at the tag being built", func() {
@@ -78,7 +108,7 @@ var _ = Describe("Dispatcher", func() {
 	})
 
 	It("skips a repo that did not opt into auto-build", func() {
-		gate.EnabledReturns(false, nil)
+		configs.ConfigReturns(build.BuildConfig{AutoBuild: false}, nil)
 
 		Expect(dispatcher.Dispatch(ctx, req, build.TriggerWebhook)).To(Succeed())
 
@@ -93,6 +123,18 @@ var _ = Describe("Dispatcher", func() {
 		Expect(dispatcher.Dispatch(ctx, req, build.TriggerWebhook)).To(Succeed())
 
 		Expect(jobs.CreateCallCount()).To(Equal(0))
+		Expect(metrics.IncBuildDispatchedArgsForCall(0)).To(Equal("skipped"))
+	})
+
+	It("skips rather than creating a Job with a surviving token", func() {
+		manifests.LoadBuildJobManifestReturns(
+			[]byte(buildJobManifest+"# __UNKNOWN_TOKEN__\n"), nil,
+		)
+
+		Expect(dispatcher.Dispatch(ctx, req, build.TriggerWebhook)).To(Succeed())
+
+		Expect(jobs.CreateCallCount()).To(Equal(0),
+			"a Job carrying a literal token fails minutes later in the pod")
 		Expect(metrics.IncBuildDispatchedArgsForCall(0)).To(Equal("skipped"))
 	})
 
@@ -118,9 +160,47 @@ var _ = Describe("Dispatcher", func() {
 		Expect(metrics.IncFilterSkippedArgsForCall(0)).To(Equal("image_exists"))
 	})
 
+	It("treats a non-terminal job for the same service and tag as a no-op", func() {
+		// Job names are unique per run, so idempotency is this lookup rather
+		// than a name collision. Without it the webhook and the poll backstop
+		// would both build one tag.
+		active.ActiveByTagReturns(
+			[]build.ActiveJob{{Name: "build-example-v1-2-3-old", Service: "bborbe/example"}},
+			nil,
+		)
+
+		Expect(dispatcher.Dispatch(ctx, req, build.TriggerPoll)).To(Succeed())
+
+		Expect(jobs.CreateCallCount()).To(Equal(0))
+		Expect(metrics.IncBuildDispatchedArgsForCall(0)).To(Equal("exists"))
+	})
+
+	It("does not dedupe against a different service sharing the tag", func() {
+		active.ActiveByTagReturns(
+			[]build.ActiveJob{{Name: "other", Service: "bborbe/other"}}, nil,
+		)
+
+		Expect(dispatcher.Dispatch(ctx, req, build.TriggerWebhook)).To(Succeed())
+
+		Expect(jobs.CreateCallCount()).To(Equal(1))
+	})
+
+	It("defers rather than failing when the build cap is reached", func() {
+		// A queue, not an error: the tag is not going away, so the next poll
+		// cycle retries.
+		active.ActiveByTagReturns([]build.ActiveJob{
+			{Name: "a", Service: "bborbe/other1"},
+			{Name: "b", Service: "bborbe/other2"},
+			{Name: "c", Service: "bborbe/other3"},
+		}, nil)
+
+		Expect(dispatcher.Dispatch(ctx, req, build.TriggerWebhook)).To(Succeed())
+
+		Expect(jobs.CreateCallCount()).To(Equal(0))
+		Expect(metrics.IncBuildDispatchedArgsForCall(0)).To(Equal("deferred"))
+	})
+
 	It("treats an existing job as a successful no-op", func() {
-		// The webhook and the poll backstop both see the same tag; the Job is
-		// the idempotency key.
 		jobs.CreateReturns(build.ErrJobAlreadyExists)
 
 		Expect(dispatcher.Dispatch(ctx, req, build.TriggerPoll)).To(Succeed())
