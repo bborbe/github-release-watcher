@@ -7,7 +7,6 @@ package build
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -57,15 +56,15 @@ func (r ImageRef) String() string {
 // component is a registry host only when it contains a "." or ":" or is
 // "localhost"; a single-component name means an official docker.io image and
 // gets the "library/" prefix.
-func ParseImageRef(image string) (ImageRef, error) {
+func ParseImageRef(ctx context.Context, image string) (ImageRef, error) {
 	image = strings.TrimSpace(image)
 	if image == "" {
-		return ImageRef{}, fmt.Errorf("empty image reference")
+		return ImageRef{}, errors.Errorf(ctx, "empty image reference")
 	}
 	// A digest reference ("@sha256:…") names immutable content, never a tag we
 	// would build, so it is not a reference this checker can answer for.
 	if strings.Contains(image, "@") {
-		return ImageRef{}, fmt.Errorf("image reference %q carries a digest, not a tag", image)
+		return ImageRef{}, errors.Errorf(ctx, "image reference %q carries a digest, not a tag", image)
 	}
 
 	host := "docker.io"
@@ -83,7 +82,7 @@ func ParseImageRef(image string) (ImageRef, error) {
 		rest = rest[:idx]
 	}
 	if rest == "" || tag == "" {
-		return ImageRef{}, fmt.Errorf("malformed image reference %q", image)
+		return ImageRef{}, errors.Errorf(ctx, "malformed image reference %q", image)
 	}
 	if host == "docker.io" {
 		host = dockerHubHost
@@ -112,7 +111,7 @@ type registryImageChecker struct {
 }
 
 func (c *registryImageChecker) Exists(ctx context.Context, imageRef string) (bool, error) {
-	ref, err := ParseImageRef(imageRef)
+	ref, err := ParseImageRef(ctx, imageRef)
 	if err != nil {
 		return false, errors.Wrapf(ctx, err, "parse image reference %q", imageRef)
 	}

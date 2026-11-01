@@ -16,9 +16,15 @@ import (
 )
 
 var _ = Describe("ParseImageRef", func() {
+	var ctx context.Context
+
+	BeforeEach(func() {
+		ctx = context.Background()
+	})
+
 	DescribeTable("splits registry, repository and tag",
 		func(image, registry, repository, tag string) {
-			ref, err := build.ParseImageRef(image)
+			ref, err := build.ParseImageRef(ctx, image)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(ref.Registry).To(Equal(registry))
 			Expect(ref.Repository).To(Equal(repository))
@@ -40,12 +46,12 @@ var _ = Describe("ParseImageRef", func() {
 	)
 
 	It("rejects a digest reference", func() {
-		_, err := build.ParseImageRef("bborbe/example@sha256:abc")
+		_, err := build.ParseImageRef(ctx, "bborbe/example@sha256:abc")
 		Expect(err).To(HaveOccurred())
 	})
 
 	It("rejects an empty reference", func() {
-		_, err := build.ParseImageRef("  ")
+		_, err := build.ParseImageRef(ctx, "  ")
 		Expect(err).To(HaveOccurred())
 	})
 })
