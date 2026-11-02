@@ -390,7 +390,11 @@ func (c *githubClient) ListTags(ctx context.Context, repo Repo) ([]string, error
 	if err != nil {
 		var ghErr *gogithub.ErrorResponse
 		if stderrors.As(err, &ghErr) && ghErr.Response.StatusCode == http.StatusNotFound {
-			// Repo gone or renamed — nothing to list.
+			// Repo gone, renamed past redirect, or outside the installation —
+			// nothing to list. Logged because the backstop cannot otherwise tell
+			// this apart from a healthy repo with no tags, and this PR exists to
+			// remove exactly that kind of silent dead path.
+			glog.V(2).Infof("list tags %s/%s: repo not visible (404)", repo.Owner, repo.Name)
 			return nil, nil
 		}
 		if isRateLimitError(err) {

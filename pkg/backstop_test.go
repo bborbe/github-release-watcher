@@ -86,19 +86,41 @@ var _ = Describe("TagBackstop", func() {
 			"the first entry is a candidate, not an answer")
 	})
 
-	It("stays silent when no tag's commit is newer than the last built one", func() {
-		// Two DIFFERENT tags on the same commit: the tie must be decided by the
-		// epoch comparison, not by the index-0 shortcut. tags[0] is deliberately
-		// not the cursor, so the short-circuit cannot hide the comparison.
+	It("dispatches a new tag name on an already-built commit", func() {
+		// The image is keyed by tag name, so v1.2.4 on v1.2.3's commit has no
+		// image yet and must build. tags[0] is deliberately not the cursor, so
+		// the index-0 shortcut cannot hide the epoch comparison.
 		ghClient.ListTagsReturns([]string{"v1.2.4", "v1.2.3"}, nil)
 		epochs(map[string]int64{"v1.2.4": 100, "v1.2.3": 100})
 
 		tag, err := backstop.Poll(ctx, "bborbe/example", "v1.2.3")
 		Expect(err).NotTo(HaveOccurred())
+		Expect(tag).To(Equal("v1.2.4"))
+		Expect(ghClient.GetCommitEpochCallCount()).To(BeNumerically(">", 0),
+			"the tie must be decided by comparing epochs, not by an early return")
+	})
+
+	It("stays silent when every other tag sits on an older commit", func() {
+		ghClient.ListTagsReturns([]string{"v1.2.2", "v1.2.3"}, nil)
+		epochs(map[string]int64{"v1.2.2": 50, "v1.2.3": 100})
+
+		tag, err := backstop.Poll(ctx, "bborbe/example", "v1.2.3")
+		Expect(err).NotTo(HaveOccurred())
 		Expect(tag).To(BeEmpty())
 		Expect(dispatcher.DispatchCallCount()).To(Equal(0))
-		Expect(ghClient.GetCommitEpochCallCount()).To(BeNumerically(">", 0),
-			"the tie must be reached by comparing epochs, not by an early return")
+	})
+
+	It("stops the fallback scan when the context is cancelled", func() {
+		// The scan is the only path that can spend a whole page of API calls, so
+		// a cancelled cycle must stop there rather than keep going.
+		cancelled, cancel := context.WithCancel(context.Background())
+		cancel()
+		ghClient.ListTagsReturns([]string{"v1.2.2", "v1.2.3"}, nil)
+		epochs(map[string]int64{"v1.2.2": 50, "v1.2.3": 100})
+
+		_, err := backstop.Poll(cancelled, "bborbe/example", "v1.2.3")
+		Expect(err).To(HaveOccurred())
+		Expect(dispatcher.DispatchCallCount()).To(Equal(0))
 	})
 
 	It("dispatches the newest tag when the cursor names a tag that no longer exists", func() {
@@ -136,12 +158,30 @@ var _ = Describe("TagBackstop", func() {
 		Expect(dispatcher.DispatchCallCount()).To(Equal(0))
 	})
 
-	It("propagates an epoch lookup failure", func() {
+	It("propagates a failure resolving the cursor's epoch", func() {
 		ghClient.ListTagsReturns([]string{"v1.3.0", "v1.2.3"}, nil)
 		ghClient.GetCommitEpochReturns(0, errors.Errorf(ctx, "boom"))
 
 		_, err := backstop.Poll(ctx, "bborbe/example", "v1.2.3")
 		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("epoch last built tag="))
+		Expect(dispatcher.DispatchCallCount()).To(Equal(0))
+	})
+
+	It("propagates a failure resolving a candidate tag's epoch", func() {
+		// Distinct from the cursor failure above: the two wrap different
+		// messages, and only one of them means the cursor is unusable.
+		ghClient.ListTagsReturns([]string{"v1.3.0", "v1.2.3"}, nil)
+		ghClient.GetCommitEpochStub = func(_ context.Context, _ pkg.Repo, ref string) (int64, error) {
+			if ref == "v1.2.3" {
+				return 100, nil
+			}
+			return 0, errors.Errorf(ctx, "boom")
+		}
+
+		_, err := backstop.Poll(ctx, "bborbe/example", "v1.2.3")
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("epoch candidate tag="))
 		Expect(dispatcher.DispatchCallCount()).To(Equal(0))
 	})
 })

@@ -81,13 +81,13 @@ func (b *tagBackstop) Poll(ctx context.Context, repoKey, lastBuiltTag string) (s
 	return tag, nil
 }
 
-// newestUnbuiltTag returns the tag to dispatch, or "" when nothing is newer
-// than lastBuiltTag.
+// newestUnbuiltTag returns the tag to dispatch, or "" when nothing is at least
+// as new as lastBuiltTag.
 //
 // The ordering rule is the whole decision here. GitHub returns ListTags
 // newest-first in practice but guarantees nothing, so the first entry is a
-// candidate, not an answer: its committer epoch must beat lastBuiltTag's, and
-// when it does not, the rest of the page is scanned. Semver sorting is
+// candidate, not an answer: its committer epoch must match or beat
+// lastBuiltTag's, and when it does not, the rest of the page is scanned. Semver sorting is
 // deliberately NOT used — it drops non-semver tags (this fleet carries
 // "probe-version") and ranks a prerelease below its own release, so a re-cut
 // vX.Y.Z-rc1 would sort under vX.Y.Z and never dispatch.
@@ -132,11 +132,17 @@ func (b *tagBackstop) newestUnbuiltTag(
 	if err != nil {
 		return "", errors.Wrapf(ctx, err, "epoch candidate tag=%s", candidate)
 	}
-	if candidateEpoch > lastEpoch {
+	// >= rather than >: a NEW tag name on an already-built commit still needs a
+	// build. The image is keyed by tag name, so a re-tag of the same commit
+	// (v1.2.4 on v1.2.3's commit) has no image yet, and a strict > would drop
+	// it silently — the same class of missed tag this backstop exists to
+	// recover. Dispatching it also advances the cursor, so the tie does not
+	// become a repeated-scan steady state.
+	if candidateEpoch >= lastEpoch {
 		return candidate, nil
 	}
 	// The ordering assumption did not hold for the first entry. Scan the page
-	// for anything genuinely newer; bounded at one page by design.
+	// for anything at least as new; bounded at one page by design.
 	for _, tag := range tags[1:] {
 		// Up to one GetCommitEpoch call per entry: a full page is 100 round
 		// trips, long enough that a cancelled cycle must stop here rather than
@@ -153,7 +159,7 @@ func (b *tagBackstop) newestUnbuiltTag(
 		if err != nil {
 			return "", errors.Wrapf(ctx, err, "epoch candidate tag=%s", tag)
 		}
-		if epoch > lastEpoch {
+		if epoch >= lastEpoch {
 			return tag, nil
 		}
 	}
