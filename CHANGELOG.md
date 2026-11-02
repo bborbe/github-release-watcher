@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## v0.10.1
 
 - fix: log which registry auth entry the pre-flight credential lookup matched, or that none did. v0.10.0 shipped the authenticated probe but the dev watcher still reports `docker hub token request returned 500`, and "still failing" cannot be split into *no credentials were found* and *credentials were sent and the registry refused* — two states with different fixes, a new Secret versus a network problem. Every "no credentials" exit reports its own reason — `secret_not_found`, `no_dockerconfigjson_key`, or `entry_found` plus the candidate keys — because a silent early return is indistinguishable from the bug the line exists to explain, and "add an entry" and "populate the existing one" are different fixes. The line names the registry and the matched dockerconfigjson key only: never a value, a length or a prefix, so a credential cannot reach the log
 
