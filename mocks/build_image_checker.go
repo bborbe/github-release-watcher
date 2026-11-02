@@ -12,11 +12,12 @@ import (
 )
 
 type BuildImageChecker struct {
-	ExistsStub        func(context.Context, string) (bool, error)
+	ExistsStub        func(context.Context, string, build.Credentials) (bool, error)
 	existsMutex       sync.RWMutex
 	existsArgsForCall []struct {
 		arg1 context.Context
 		arg2 string
+		arg3 build.Credentials
 	}
 	existsReturns struct {
 		result1 bool
@@ -30,19 +31,20 @@ type BuildImageChecker struct {
 	invocationsMutex sync.RWMutex
 }
 
-func (fake *BuildImageChecker) Exists(arg1 context.Context, arg2 string) (bool, error) {
+func (fake *BuildImageChecker) Exists(arg1 context.Context, arg2 string, arg3 build.Credentials) (bool, error) {
 	fake.existsMutex.Lock()
 	ret, specificReturn := fake.existsReturnsOnCall[len(fake.existsArgsForCall)]
 	fake.existsArgsForCall = append(fake.existsArgsForCall, struct {
 		arg1 context.Context
 		arg2 string
-	}{arg1, arg2})
+		arg3 build.Credentials
+	}{arg1, arg2, arg3})
 	stub := fake.ExistsStub
 	fakeReturns := fake.existsReturns
-	fake.recordInvocation("Exists", []interface{}{arg1, arg2})
+	fake.recordInvocation("Exists", []interface{}{arg1, arg2, arg3})
 	fake.existsMutex.Unlock()
 	if stub != nil {
-		return stub(arg1, arg2)
+		return stub(arg1, arg2, arg3)
 	}
 	if specificReturn {
 		return ret.result1, ret.result2
@@ -56,17 +58,17 @@ func (fake *BuildImageChecker) ExistsCallCount() int {
 	return len(fake.existsArgsForCall)
 }
 
-func (fake *BuildImageChecker) ExistsCalls(stub func(context.Context, string) (bool, error)) {
+func (fake *BuildImageChecker) ExistsCalls(stub func(context.Context, string, build.Credentials) (bool, error)) {
 	fake.existsMutex.Lock()
 	defer fake.existsMutex.Unlock()
 	fake.ExistsStub = stub
 }
 
-func (fake *BuildImageChecker) ExistsArgsForCall(i int) (context.Context, string) {
+func (fake *BuildImageChecker) ExistsArgsForCall(i int) (context.Context, string, build.Credentials) {
 	fake.existsMutex.RLock()
 	defer fake.existsMutex.RUnlock()
 	argsForCall := fake.existsArgsForCall[i]
-	return argsForCall.arg1, argsForCall.arg2
+	return argsForCall.arg1, argsForCall.arg2, argsForCall.arg3
 }
 
 func (fake *BuildImageChecker) ExistsReturns(result1 bool, result2 error) {

@@ -6,6 +6,7 @@ package build_test
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -82,14 +83,14 @@ var _ = Describe("RegistryImageChecker", func() {
 	})
 
 	It("reports an existing image", func() {
-		exists, err := checker.Exists(ctx, imageRef)
+		exists, err := checker.Exists(ctx, imageRef, build.Credentials{})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(exists).To(BeTrue())
 	})
 
 	It("reports a missing image", func() {
 		status = http.StatusNotFound
-		exists, err := checker.Exists(ctx, imageRef)
+		exists, err := checker.Exists(ctx, imageRef, build.Credentials{})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(exists).To(BeFalse())
 	})
@@ -98,14 +99,59 @@ var _ = Describe("RegistryImageChecker", func() {
 		// This is the fail-closed contract: an unreadable registry must surface
 		// as an error so the dispatcher skips rather than re-pushing a tag.
 		status = http.StatusInternalServerError
-		exists, err := checker.Exists(ctx, imageRef)
+		exists, err := checker.Exists(ctx, imageRef, build.Credentials{})
 		Expect(err).To(HaveOccurred())
 		Expect(exists).To(BeFalse())
 	})
 
 	It("returns an error when the registry is unreachable", func() {
 		server.Close()
-		_, err := checker.Exists(ctx, imageRef)
+		_, err := checker.Exists(ctx, imageRef, build.Credentials{})
 		Expect(err).To(HaveOccurred())
+	})
+
+	It("authenticates the manifest request when credentials are configured", func() {
+		// A private registry answers 401 to an anonymous probe even when the
+		// image is there, which the fail-closed rule would read as "cannot
+		// tell" and skip a build that would have worked.
+		var gotUser, gotPass string
+		var gotOK bool
+		server.Close()
+		server = httptest.NewTLSServer(http.HandlerFunc(
+			func(resp http.ResponseWriter, r *http.Request) {
+				gotUser, gotPass, gotOK = r.BasicAuth()
+				resp.WriteHeader(status)
+			},
+		))
+		checker = build.NewRegistryImageChecker(server.Client())
+		imageRef = strings.TrimPrefix(server.URL, "https://") + "/bborbe/example:v1.2.3"
+
+		exists, err := checker.Exists(
+			ctx, imageRef, build.Credentials{Username: "robot", Password: "s3cret"},
+		)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(exists).To(BeTrue())
+		Expect(gotOK).To(BeTrue())
+		Expect(gotUser).To(Equal("robot"))
+		Expect(gotPass).To(Equal("s3cret"))
+	})
+
+	It("never renders the password in an error or a formatted value", func() {
+		// The failure path is written into a log line, a metric label and a
+		// task file; a token echoed into `err=` is a credential leak with a
+		// long tail.
+		status = http.StatusUnauthorized
+		_, err := checker.Exists(
+			ctx, imageRef, build.Credentials{Username: "robot", Password: "s3cret"},
+		)
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).NotTo(ContainSubstring("s3cret"))
+
+		rendered := fmt.Sprintf("%v %s %#v", build.Credentials{
+			Username: "robot", Password: "s3cret",
+		}, build.Credentials{Username: "robot", Password: "s3cret"},
+			build.Credentials{Username: "robot", Password: "s3cret"})
+		Expect(rendered).NotTo(ContainSubstring("s3cret"))
+		Expect(rendered).To(ContainSubstring("redacted"))
 	})
 })

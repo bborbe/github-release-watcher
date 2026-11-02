@@ -6,6 +6,8 @@ package pkg
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	stderrors "errors"
 	"strings"
 
@@ -13,6 +15,7 @@ import (
 	"github.com/bborbe/github-release-watcher/pkg/build"
 	libk8s "github.com/bborbe/k8s"
 	batchv1 "k8s.io/api/batch/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/kubernetes"
@@ -159,6 +162,115 @@ func (l *buildJobLister) ActiveByTag(
 		})
 	}
 	return active, nil
+}
+
+// dockerConfigJSONKey is the data key of a kubernetes.io/dockerconfigjson
+// Secret, the same key the rendered Job mounts as its push credentials.
+const dockerConfigJSONKey = ".dockerconfigjson"
+
+// NewBuildCredentialReader adapts the cluster clientset to
+// build.CredentialReader — it reads the dockerconfigjson Secret the build will
+// push with, so the pre-flight can ask the registry as the same principal.
+//
+// The alternative — probing anonymously — is not the same question. Measured on
+// nuke dev 2026-11-02: an anonymous Docker Hub token request from the cluster's
+// egress returned 500 while the same URL answered 200 elsewhere, so the probe
+// reported "registry unreachable" for a build that would have pushed fine.
+func NewBuildCredentialReader(clientset kubernetes.Interface) build.CredentialReader {
+	return &buildCredentialReader{clientset: clientset}
+}
+
+type buildCredentialReader struct {
+	clientset kubernetes.Interface
+}
+
+// Credentials implements build.CredentialReader. A missing Secret or a missing
+// auth entry is "no credentials configured", never an error: the probe then
+// falls back to anonymous, which is what every caller did before this existed.
+func (r *buildCredentialReader) Credentials(
+	ctx context.Context,
+	namespace, secretName, imageRef string,
+) (build.Credentials, error) {
+	ref, err := build.ParseImageRef(ctx, imageRef)
+	if err != nil {
+		return build.Credentials{}, errors.Wrapf(ctx, err, "parse image reference")
+	}
+	secret, err := r.clientset.CoreV1().Secrets(namespace).Get(
+		ctx, secretName, metav1.GetOptions{},
+	)
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			return build.Credentials{}, nil
+		}
+		return build.Credentials{}, errors.Wrapf(
+			ctx, err, "get push secret %s/%s", namespace, secretName,
+		)
+	}
+	raw, ok := secret.Data[dockerConfigJSONKey]
+	if !ok {
+		return build.Credentials{}, nil
+	}
+	var cfg struct {
+		Auths map[string]struct {
+			Auth     string `json:"auth"`
+			Username string `json:"username"`
+			Password string `json:"password"`
+		} `json:"auths"`
+	}
+	if err := json.Unmarshal(raw, &cfg); err != nil {
+		// Never echo the payload: it is the credential itself.
+		return build.Credentials{}, errors.Wrapf(
+			ctx, err, "decode push secret %s/%s", namespace, secretName,
+		)
+	}
+	for _, key := range registryAuthKeys(ref.Registry) {
+		entry, ok := cfg.Auths[key]
+		if !ok {
+			continue
+		}
+		username, password := entry.Username, entry.Password
+		if entry.Auth != "" {
+			if u, p, ok := decodeDockerAuth(entry.Auth); ok {
+				username, password = u, p
+			}
+		}
+		if username == "" && password == "" {
+			continue
+		}
+		return build.Credentials{Username: username, Password: password}, nil
+	}
+	return build.Credentials{}, nil
+}
+
+// registryAuthKeys lists the dockerconfigjson keys that name a registry host.
+//
+// docker.io is the awkward one: the canonical key in a `docker login` file is
+// the legacy `https://index.docker.io/v1/`, but hand-written and CI-generated
+// files use the short names too, so all of them are accepted.
+func registryAuthKeys(host string) []string {
+	if host == "registry-1.docker.io" {
+		return []string{
+			"https://index.docker.io/v1/",
+			"index.docker.io",
+			"docker.io",
+			"registry-1.docker.io",
+		}
+	}
+	return []string{host, "https://" + host}
+}
+
+// decodeDockerAuth splits a dockerconfigjson `auth` value ("user:password",
+// base64-encoded).
+func decodeDockerAuth(value string) (string, string, bool) {
+	decoded, err := base64.StdEncoding.DecodeString(value)
+	if err != nil {
+		return "", "", false
+	}
+	username, password, ok := strings.Cut(string(decoded), ":")
+	if !ok {
+		return "", "", false
+	}
+	return username, password, true
 }
 
 // repoFromKey splits an "owner/name" key into a Repo.

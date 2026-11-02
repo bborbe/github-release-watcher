@@ -110,11 +110,48 @@ func NewRegistryImageChecker(client *http.Client) ImageChecker {
 	return &registryImageChecker{client: client}
 }
 
+// Credentials are the registry credentials the build itself will push with.
+//
+// The pre-flight asks the same registry the Job will push to, so it must ask as
+// the same principal. An anonymous probe tests a different request than the
+// build makes: Docker Hub answers an anonymous token request from a shared
+// cluster egress with 500 while the authenticated one succeeds, which reads as
+// "registry unreachable" and skips a build that would have worked.
+type Credentials struct {
+	Username string
+	Password string
+}
+
+// IsZero reports whether no credentials are configured. A zero value means
+// "probe anonymously", which is the behaviour every caller had before
+// credentials were threaded through.
+func (c Credentials) IsZero() bool {
+	return c.Username == "" && c.Password == ""
+}
+
+// String deliberately does not render the secret, so a Credentials value can
+// never leak through a %v or %s in an error or log line.
+func (c Credentials) String() string {
+	if c.IsZero() {
+		return "credentials(anonymous)"
+	}
+	return "credentials(user=" + c.Username + ", password=<redacted>)"
+}
+
+// GoString matches String so %#v cannot render the password either.
+func (c Credentials) GoString() string {
+	return c.String()
+}
+
 type registryImageChecker struct {
 	client *http.Client
 }
 
-func (c *registryImageChecker) Exists(ctx context.Context, imageRef string) (bool, error) {
+func (c *registryImageChecker) Exists(
+	ctx context.Context,
+	imageRef string,
+	creds Credentials,
+) (bool, error) {
 	ref, err := ParseImageRef(ctx, imageRef)
 	if err != nil {
 		return false, errors.Wrapf(ctx, err, "parse image reference %q", imageRef)
@@ -132,11 +169,17 @@ func (c *registryImageChecker) Exists(ctx context.Context, imageRef string) (boo
 	req.Header.Set("Accept", manifestAccept)
 
 	if ref.Registry == dockerHubHost {
-		token, err := c.dockerHubToken(ctx, ref.Repository)
+		token, err := c.dockerHubToken(ctx, ref.Repository, creds)
 		if err != nil {
 			return false, err
 		}
 		req.Header.Set("Authorization", "Bearer "+token)
+	} else if !creds.IsZero() {
+		// Other registries authenticate the manifest request directly; a
+		// private in-house registry answers 401 to an anonymous probe even
+		// when the image is there, which the fail-closed rule would read as
+		// "cannot tell" and skip a build that would have worked.
+		req.SetBasicAuth(creds.Username, creds.Password)
 	}
 
 	resp, err := c.client.Do(req)
@@ -166,10 +209,16 @@ func (c *registryImageChecker) Exists(ctx context.Context, imageRef string) (boo
 	}
 }
 
-// dockerHubToken fetches an anonymous pull token for a docker.io repository.
+// dockerHubToken fetches a pull token for a docker.io repository.
+//
+// Credentials, when present, are sent as basic auth on the token request — that
+// is what makes the probe ask as the same principal the build pushes as. The
+// anonymous form is kept because a repo with no configured secret must still be
+// able to probe a public image.
 func (c *registryImageChecker) dockerHubToken(
 	ctx context.Context,
 	repository string,
+	creds Credentials,
 ) (string, error) {
 	req, err := http.NewRequestWithContext(
 		ctx,
@@ -179,6 +228,9 @@ func (c *registryImageChecker) dockerHubToken(
 	)
 	if err != nil {
 		return "", errors.Wrapf(ctx, err, "build docker hub token request")
+	}
+	if !creds.IsZero() {
+		req.SetBasicAuth(creds.Username, creds.Password)
 	}
 	resp, err := c.client.Do(req)
 	if err != nil {

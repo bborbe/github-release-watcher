@@ -132,7 +132,29 @@ var ErrJobAlreadyExists = stderrors.New("build job already exists")
 // never (false, nil) — "I could not tell" must not read as "it is not there",
 // because that is the path that re-pushes an existing tag.
 type ImageChecker interface {
-	Exists(ctx context.Context, imageRef string) (bool, error)
+	// Exists reports whether the image is published. creds are the credentials
+	// the build itself will push with; a zero value probes anonymously.
+	Exists(ctx context.Context, imageRef string, creds Credentials) (bool, error)
+}
+
+//counterfeiter:generate -o ../../mocks/build_credential_reader.go --fake-name BuildCredentialReader . CredentialReader
+
+// CredentialReader returns the registry credentials a repo's build pushes with,
+// read from the same dockerconfigjson secret the rendered Job mounts.
+//
+// This exists so the pre-flight asks the registry as the same principal the
+// build will. An anonymous probe is a different request: it fails on a shared
+// cluster egress for reasons that have nothing to do with whether the image is
+// there, and the fail-closed rule then turns that into a skipped build.
+//
+// A missing secret is not an error — it means "no credentials configured", and
+// the probe falls back to anonymous, which is the behaviour every caller had
+// before this existed.
+type CredentialReader interface {
+	Credentials(
+		ctx context.Context,
+		namespace, secretName, imageRef string,
+	) (Credentials, error)
 }
 
 //counterfeiter:generate -o ../../mocks/build_metrics.go --fake-name BuildMetrics . Metrics
@@ -150,6 +172,7 @@ type Deps struct {
 	Manifests     ManifestLoader
 	Jobs          JobCreator
 	Images        ImageChecker
+	Credentials   CredentialReader
 	Configs       ConfigProvider
 	Epochs        CommitEpochProvider
 	ActiveJobs    JobLister
@@ -234,7 +257,11 @@ func (d *dispatcher) prepare(
 	}
 
 	imageRef := ImageReference(imageRepo, req.Tag)
-	exists, err := d.deps.Images.Exists(ctx, imageRef)
+	creds, err := d.credentials(ctx, cfg.PushSecret, imageRef)
+	if err != nil {
+		return batchv1.Job{}, "", false, err
+	}
+	exists, err := d.deps.Images.Exists(ctx, imageRef, creds)
 	if err != nil {
 		// Fail closed: an unreachable registry must never be read as "the
 		// image is absent, build it". Re-pushing an existing tag produces a
@@ -261,6 +288,30 @@ func (d *dispatcher) prepare(
 	}
 
 	return d.admit(ctx, req, trigger, job, imageRef)
+}
+
+// credentials resolves the registry credentials the build will push with, so
+// the pre-flight can ask the registry as the same principal.
+//
+// No reader and no secret name both mean "probe anonymously" rather than an
+// error: a repo without a push secret is not a broken repo, and turning that
+// into a dispatch failure would be a new way to skip a build that works today.
+func (d *dispatcher) credentials(
+	ctx context.Context,
+	secretName, imageRef string,
+) (Credentials, error) {
+	if d.deps.Credentials == nil || secretName == "" {
+		return Credentials{}, nil
+	}
+	creds, err := d.deps.Credentials.Credentials(
+		ctx, DefaultBuildNamespace, secretName, imageRef,
+	)
+	if err != nil {
+		return Credentials{}, errors.Wrapf(
+			ctx, err, "resolve registry credentials secret=%s", secretName,
+		)
+	}
+	return creds, nil
 }
 
 // render assembles the canonical render params and substitutes them.
