@@ -210,6 +210,41 @@ var _ = Describe("Dispatcher", func() {
 		Expect(secretName).To(Equal("registry-secret"))
 	})
 
+	It("probes anonymously when no credential reader is wired", func() {
+		// The backward-compatible path: a deployment without a reader must keep
+		// behaving exactly as it did before credentials existed.
+		dispatcher = build.NewDispatcher(build.Deps{
+			Manifests:  manifests,
+			Jobs:       jobs,
+			Images:     images,
+			Configs:    configs,
+			Epochs:     epochs,
+			ActiveJobs: active,
+			Metrics:    metrics,
+		})
+
+		Expect(dispatcher.Dispatch(ctx, req, build.TriggerWebhook)).To(Succeed())
+
+		_, _, got := images.ExistsArgsForCall(0)
+		Expect(got.IsZero()).To(BeTrue())
+		Expect(creds.CredentialsCallCount()).To(Equal(0))
+	})
+
+	It("probes anonymously when the repo configures no push secret", func() {
+		configs.ConfigReturns(build.Config{
+			AutoBuild:       true,
+			Destinations:    []string{"dockerhub"},
+			PushSecret:      "",
+			DeadlineSeconds: 900,
+		}, nil)
+
+		Expect(dispatcher.Dispatch(ctx, req, build.TriggerWebhook)).To(Succeed())
+
+		_, _, got := images.ExistsArgsForCall(0)
+		Expect(got.IsZero()).To(BeTrue())
+		Expect(creds.CredentialsCallCount()).To(Equal(0))
+	})
+
 	It("fails rather than probing anonymously when the credential lookup errors", func() {
 		// Falling back to anonymous here would answer a different question than
 		// the one that decides whether to build.
