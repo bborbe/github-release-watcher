@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## v0.10.0
 
 - fix: probe the registry as the principal the build pushes as, instead of anonymously. The pre-flight asked `auth.docker.io` for an anonymous pull token while the Job it gates pushes with the repo's `buildkit-push` dockerconfigjson — two different requests, so the check could answer a question the build never asks. Measured on nuke dev 2026-11-02: `docker hub token request returned 500` from the cluster's egress while the identical URL answered 200 from a workstation, so the fail-closed rule skipped a build that would have pushed fine. `ImageChecker.Exists` now takes the credentials, and a new `CredentialReader` reads them from the same Secret the rendered Job mounts (`get` on the named Secret, no broader grant). The fail-closed rule is unchanged — an unreachable registry still skips, it just no longer reports "unreachable" for a request only the probe makes. `Credentials` renders as `password=<redacted>` through both `String` and `GoString`, and the failure path carries no secret, so a token cannot reach the skip line, the metric label or the task file. A missing Secret or auth entry still means "probe anonymously" rather than an error, so a repo without a push secret behaves exactly as before
 
