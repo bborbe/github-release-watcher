@@ -243,7 +243,7 @@ func (w *watcher) runBackstop(ctx context.Context, repo Repo, cursorState *Curso
 	if state := cursorState.Repos[repo.Key()]; state != nil {
 		lastBuilt = state.LastBuiltTag
 	}
-	tag, err := w.backstop.Poll(ctx, repo.Key(), lastBuilt)
+	tag, err := w.backstop.Poll(ctx, repo, lastBuilt)
 	if err != nil {
 		// Best-effort: a backstop failure must not abort a cycle that is also
 		// doing the release scan. The next cycle retries.

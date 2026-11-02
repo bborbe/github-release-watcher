@@ -15,6 +15,10 @@ import (
 	. "github.com/onsi/gomega"
 )
 
+// exampleRepo is the production shape: a host-qualified key (Repo.Key()) is
+// what the cursor is stored under, and the struct is what Poll now takes.
+var exampleRepo = pkg.Repo{Owner: "bborbe", Name: "example"}
+
 var _ = Describe("TagBackstop", func() {
 	var (
 		ctx        context.Context
@@ -46,7 +50,7 @@ var _ = Describe("TagBackstop", func() {
 		ghClient.ListTagsReturns([]string{"v1.2.3", "v1.2.2"}, nil)
 		epochs(map[string]int64{"v1.2.3": 200, "v1.2.2": 100})
 
-		tag, err := backstop.Poll(ctx, "bborbe/example", "")
+		tag, err := backstop.Poll(ctx, exampleRepo, "")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(tag).To(Equal("v1.2.3"))
 
@@ -58,12 +62,38 @@ var _ = Describe("TagBackstop", func() {
 			"the backstop must be distinguishable from the webhook path in logs")
 	})
 
+	It("passes the Repo through and dispatches the bare owner/name", func() {
+		// Regression, found live on dev at v0.12.1 and not by these specs: the
+		// backstop used to take repo.Key() and re-split it with repoFromKey,
+		// which cuts on the FIRST "/". "github.com/bborbe/go-skeleton" therefore
+		// parsed as Owner="github.com", Name="bborbe/go-skeleton", every GitHub
+		// call asked for /repos/github.com/bborbe/go-skeleton/... , the 404 was
+		// mapped to an empty tag list, and the backstop reported "nothing to do"
+		// every cycle — the silent dead path this whole change exists to remove.
+		// Both halves are asserted: the client sees the struct untouched, and the
+		// build pipeline sees the bare form its own repoFromKey expects.
+		ghClient.ListTagsReturns([]string{"v1.2.3"}, nil)
+		epochs(map[string]int64{"v1.2.3": 200})
+
+		_, err := backstop.Poll(ctx, exampleRepo, "")
+		Expect(err).NotTo(HaveOccurred())
+
+		_, listed := ghClient.ListTagsArgsForCall(0)
+		Expect(listed).To(Equal(exampleRepo),
+			"the Repo must reach the client intact, never round-tripped through a string")
+
+		Expect(dispatcher.DispatchCallCount()).To(Equal(1))
+		_, req, _ := dispatcher.DispatchArgsForCall(0)
+		Expect(req.Repo).To(Equal("bborbe/example"),
+			"build.Request.Repo is re-split by repoFromKey and must be the bare owner/name")
+	})
+
 	It("stays silent for a tag it already handled", func() {
 		// Without this the backstop would re-dispatch every repo's tag on every
 		// cycle and inflate filter_skipped_total{reason="image_exists"}.
 		ghClient.ListTagsReturns([]string{"v1.2.3", "v1.2.2"}, nil)
 
-		tag, err := backstop.Poll(ctx, "bborbe/example", "v1.2.3")
+		tag, err := backstop.Poll(ctx, exampleRepo, "v1.2.3")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(tag).To(BeEmpty())
 		Expect(dispatcher.DispatchCallCount()).To(Equal(0))
@@ -73,7 +103,7 @@ var _ = Describe("TagBackstop", func() {
 		ghClient.ListTagsReturns([]string{"v1.3.0", "v1.2.3"}, nil)
 		epochs(map[string]int64{"v1.3.0": 200, "v1.2.3": 100})
 
-		tag, err := backstop.Poll(ctx, "bborbe/example", "v1.2.3")
+		tag, err := backstop.Poll(ctx, exampleRepo, "v1.2.3")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(tag).To(Equal("v1.3.0"))
 	})
@@ -85,7 +115,7 @@ var _ = Describe("TagBackstop", func() {
 		ghClient.ListTagsReturns([]string{"v1.2.2", "v1.3.0", "v1.2.3"}, nil)
 		epochs(map[string]int64{"v1.2.2": 50, "v1.3.0": 200, "v1.2.3": 100})
 
-		tag, err := backstop.Poll(ctx, "bborbe/example", "v1.2.3")
+		tag, err := backstop.Poll(ctx, exampleRepo, "v1.2.3")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(tag).To(Equal("v1.3.0"),
 			"the first entry is a candidate, not an answer")
@@ -98,7 +128,7 @@ var _ = Describe("TagBackstop", func() {
 		ghClient.ListTagsReturns([]string{"v1.2.4", "v1.3.0", "v1.2.3"}, nil)
 		epochs(map[string]int64{"v1.2.4": 100, "v1.3.0": 200, "v1.2.3": 100})
 
-		tag, err := backstop.Poll(ctx, "bborbe/example", "v1.2.3")
+		tag, err := backstop.Poll(ctx, exampleRepo, "v1.2.3")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(tag).To(Equal("v1.3.0"))
 	})
@@ -111,7 +141,7 @@ var _ = Describe("TagBackstop", func() {
 		ghClient.ListTagsReturns([]string{"v1.2.3", "v1.3.0"}, nil)
 		epochs(map[string]int64{"v1.2.3": 100, "v1.3.0": 200})
 
-		tag, err := backstop.Poll(ctx, "bborbe/example", "v1.2.3")
+		tag, err := backstop.Poll(ctx, exampleRepo, "v1.2.3")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(tag).To(BeEmpty())
 		Expect(ghClient.GetCommitEpochCallCount()).To(Equal(0),
@@ -125,7 +155,7 @@ var _ = Describe("TagBackstop", func() {
 		ghClient.ListTagsReturns([]string{"v1.2.4", "v1.2.3"}, nil)
 		epochs(map[string]int64{"v1.2.4": 100, "v1.2.3": 100})
 
-		tag, err := backstop.Poll(ctx, "bborbe/example", "v1.2.3")
+		tag, err := backstop.Poll(ctx, exampleRepo, "v1.2.3")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(tag).To(Equal("v1.2.4"))
 		Expect(ghClient.GetCommitEpochCallCount()).To(BeNumerically(">", 0),
@@ -136,7 +166,7 @@ var _ = Describe("TagBackstop", func() {
 		ghClient.ListTagsReturns([]string{"v1.2.2", "v1.2.3"}, nil)
 		epochs(map[string]int64{"v1.2.2": 50, "v1.2.3": 100})
 
-		tag, err := backstop.Poll(ctx, "bborbe/example", "v1.2.3")
+		tag, err := backstop.Poll(ctx, exampleRepo, "v1.2.3")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(tag).To(BeEmpty())
 		Expect(dispatcher.DispatchCallCount()).To(Equal(0))
@@ -160,7 +190,7 @@ var _ = Describe("TagBackstop", func() {
 			return 50, nil
 		}
 
-		_, err := backstop.Poll(scanCtx, "bborbe/example", "v1.2.3")
+		_, err := backstop.Poll(scanCtx, exampleRepo, "v1.2.3")
 		Expect(err).To(HaveOccurred())
 		Expect(err.Error()).To(ContainSubstring("cancelled"))
 		Expect(candidateCalls).To(Equal(1),
@@ -176,7 +206,7 @@ var _ = Describe("TagBackstop", func() {
 		ghClient.ListTagsReturns([]string{"v1.2.2", "v1.2.3"}, nil)
 		epochs(map[string]int64{"v1.2.2": 50, "v1.2.3": 100})
 
-		_, err := backstop.Poll(cancelled, "bborbe/example", "v1.2.3")
+		_, err := backstop.Poll(cancelled, exampleRepo, "v1.2.3")
 		Expect(err).To(HaveOccurred())
 		Expect(dispatcher.DispatchCallCount()).To(Equal(0))
 	})
@@ -186,7 +216,7 @@ var _ = Describe("TagBackstop", func() {
 		ghClient.ListTagsReturns([]string{"v1.2.3", "v1.2.2"}, nil)
 		epochs(map[string]int64{"v1.2.3": 200, "v1.2.2": 100})
 
-		tag, err := backstop.Poll(ctx, "bborbe/example", "v1.1.0")
+		tag, err := backstop.Poll(ctx, exampleRepo, "v1.1.0")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(tag).To(Equal("v1.2.3"))
 	})
@@ -194,7 +224,7 @@ var _ = Describe("TagBackstop", func() {
 	It("stays silent when the repo has no tags", func() {
 		ghClient.ListTagsReturns(nil, nil)
 
-		tag, err := backstop.Poll(ctx, "bborbe/example", "")
+		tag, err := backstop.Poll(ctx, exampleRepo, "")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(tag).To(BeEmpty())
 		Expect(dispatcher.DispatchCallCount()).To(Equal(0))
@@ -205,7 +235,7 @@ var _ = Describe("TagBackstop", func() {
 		epochs(map[string]int64{"v1.2.3": 200})
 		dispatcher.DispatchReturns(errors.Errorf(ctx, "cluster unreachable"))
 
-		tag, err := backstop.Poll(ctx, "bborbe/example", "")
+		tag, err := backstop.Poll(ctx, exampleRepo, "")
 		Expect(err).To(HaveOccurred())
 		Expect(tag).To(BeEmpty(), "a failed dispatch must not be recorded as handled")
 	})
@@ -213,7 +243,7 @@ var _ = Describe("TagBackstop", func() {
 	It("propagates a tag-listing failure", func() {
 		ghClient.ListTagsReturns(nil, errors.Errorf(ctx, "rate limited"))
 
-		_, err := backstop.Poll(ctx, "bborbe/example", "")
+		_, err := backstop.Poll(ctx, exampleRepo, "")
 		Expect(err).To(HaveOccurred())
 		Expect(dispatcher.DispatchCallCount()).To(Equal(0))
 	})
@@ -222,7 +252,7 @@ var _ = Describe("TagBackstop", func() {
 		ghClient.ListTagsReturns([]string{"v1.3.0", "v1.2.3"}, nil)
 		ghClient.GetCommitEpochReturns(0, errors.Errorf(ctx, "boom"))
 
-		_, err := backstop.Poll(ctx, "bborbe/example", "v1.2.3")
+		_, err := backstop.Poll(ctx, exampleRepo, "v1.2.3")
 		Expect(err).To(HaveOccurred())
 		Expect(err.Error()).To(ContainSubstring("epoch last built tag="))
 		Expect(dispatcher.DispatchCallCount()).To(Equal(0))
@@ -239,7 +269,7 @@ var _ = Describe("TagBackstop", func() {
 			return 0, errors.Errorf(ctx, "boom")
 		}
 
-		_, err := backstop.Poll(ctx, "bborbe/example", "v1.2.3")
+		_, err := backstop.Poll(ctx, exampleRepo, "v1.2.3")
 		Expect(err).To(HaveOccurred())
 		Expect(err.Error()).To(ContainSubstring("epoch candidate tag="))
 		Expect(dispatcher.DispatchCallCount()).To(Equal(0))
@@ -250,7 +280,7 @@ var _ = Describe("NewTagBackstop", func() {
 	It("returns a no-op backstop when there is no dispatcher", func() {
 		backstop := pkg.NewTagBackstop(new(mocks.GitHubClient), nil)
 
-		tag, err := backstop.Poll(context.Background(), "bborbe/example", "")
+		tag, err := backstop.Poll(context.Background(), exampleRepo, "")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(tag).To(BeEmpty())
 	})

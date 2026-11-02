@@ -29,7 +29,17 @@ type TagBackstop interface {
 	// cursor's record of the last tag this backstop handled. It returns the tag
 	// it dispatched, or "" when there was nothing new to do — the caller
 	// persists a non-empty return so the next cycle stays silent.
-	Poll(ctx context.Context, repoKey, lastBuiltTag string) (string, error)
+	//
+	// It takes the Repo itself, not a key string. An earlier signature took
+	// repo.Key() and re-split it with repoFromKey, which cuts on the FIRST "/" —
+	// so the host-qualified key "github.com/bborbe/go-skeleton" parsed as
+	// Owner="github.com", Name="bborbe/go-skeleton" and every GitHub call asked
+	// for /repos/github.com/bborbe/go-skeleton/... . GitHub answered 404, the
+	// 404 mapped to an empty tag list, and the backstop reported "nothing to do"
+	// on every cycle — the exact silent dead path this type exists to remove,
+	// reintroduced by a lossy round-trip through a string. Passing the struct
+	// makes the mistake unrepresentable.
+	Poll(ctx context.Context, repo Repo, lastBuiltTag string) (string, error)
 }
 
 // NewTagBackstop wires the backstop. A nil dispatcher yields a backstop that
@@ -47,7 +57,7 @@ func NewTagBackstop(ghClient GitHubClient, dispatcher build.Dispatcher) TagBacks
 type NoopTagBackstop struct{}
 
 // Poll implements TagBackstop and always reports nothing to do.
-func (NoopTagBackstop) Poll(context.Context, string, string) (string, error) {
+func (NoopTagBackstop) Poll(context.Context, Repo, string) (string, error) {
 	return "", nil
 }
 
@@ -56,27 +66,29 @@ type tagBackstop struct {
 	dispatcher build.Dispatcher
 }
 
-func (b *tagBackstop) Poll(ctx context.Context, repoKey, lastBuiltTag string) (string, error) {
-	repo, ok := repoFromKey(repoKey)
-	if !ok {
-		return "", errors.Errorf(ctx, "malformed repo key %q", repoKey)
-	}
+func (b *tagBackstop) Poll(ctx context.Context, repo Repo, lastBuiltTag string) (string, error) {
 	tag, err := b.newestUnbuiltTag(ctx, repo, lastBuiltTag)
 	if err != nil {
-		return "", errors.Wrapf(ctx, err, "resolve newest tag repo=%s", repoKey)
+		return "", errors.Wrapf(ctx, err, "resolve newest tag repo=%s", repo.Key())
 	}
 	if tag == "" {
 		return "", nil
 	}
+	// Repo.String() is the bare "owner/name" form the build pipeline expects:
+	// build.Request.Repo is re-split by repoFromKey and read by the manifest
+	// loader and file fetcher, all of which cut on the first "/". The
+	// host-qualified Repo.Key() is the wrong form here and silently produces
+	// /repos/github.com/owner/name/... paths.
 	if err := b.dispatcher.Dispatch(
 		ctx,
-		build.Request{Repo: repoKey, Tag: tag},
+		build.Request{Repo: repo.String(), Tag: tag},
 		build.TriggerPoll,
 	); err != nil {
-		return "", errors.Wrapf(ctx, err, "backstop dispatch repo=%s tag=%s", repoKey, tag)
+		return "", errors.Wrapf(ctx, err, "backstop dispatch repo=%s tag=%s", repo.Key(), tag)
 	}
 	glog.V(2).Infof(
-		"github-release-watcher backstop handled repo=%s ref=%s", repoKey, build.TagRefPrefix+tag,
+		"github-release-watcher backstop handled repo=%s ref=%s",
+		repo.Key(), build.TagRefPrefix+tag,
 	)
 	return tag, nil
 }
