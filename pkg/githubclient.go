@@ -64,6 +64,17 @@ type GitHubClient interface {
 	// already handled.
 	GetLatestReleaseTag(ctx context.Context, repo Repo) (string, error)
 
+	// ListTags returns the repo's tag names, one page of up to 100, in the
+	// order GitHub returns them — newest first in practice, but NOT guaranteed
+	// by the API. The response carries no commit dates, so a caller that needs
+	// recency must resolve it with GetCommitEpoch.
+	//
+	// This is the poll backstop's input. GetLatestReleaseTag cannot serve that
+	// purpose: a repo that tags without publishing a GitHub Release object
+	// answers 404 on every cycle, which the backstop cannot distinguish from a
+	// healthy "nothing to recover" — a silent dead path rather than a failure.
+	ListTags(ctx context.Context, repo Repo) ([]string, error)
+
 	// GetCommitEpoch returns the committer date, in Unix seconds, of the commit
 	// the given ref resolves to.
 	//
@@ -364,6 +375,34 @@ func (c *githubClient) GetLatestReleaseTag(ctx context.Context, repo Repo) (stri
 		)
 	}
 	return release.GetTagName(), nil
+}
+
+// ListTags returns one page of the repo's tag names.
+//
+// One page, not a paginated walk: GitHub returns tags newest-first in practice,
+// so the newest tag is on the first page whatever the repo size. A caller that
+// needs a guarantee rather than the practice confirms with GetCommitEpoch —
+// which is what the backstop does.
+func (c *githubClient) ListTags(ctx context.Context, repo Repo) ([]string, error) {
+	tags, _, err := c.client.Repositories.ListTags(
+		ctx, repo.Owner, repo.Name, &gogithub.ListOptions{PerPage: 100},
+	)
+	if err != nil {
+		var ghErr *gogithub.ErrorResponse
+		if stderrors.As(err, &ghErr) && ghErr.Response.StatusCode == http.StatusNotFound {
+			// Repo gone or renamed — nothing to list.
+			return nil, nil
+		}
+		if isRateLimitError(err) {
+			return nil, ErrRateLimited
+		}
+		return nil, errors.Wrapf(ctx, err, "list tags %s/%s", repo.Owner, repo.Name)
+	}
+	names := make([]string, 0, len(tags))
+	for _, tag := range tags {
+		names = append(names, tag.GetName())
+	}
+	return names, nil
 }
 
 // GetCommitEpoch returns the committer date of the commit ref resolves to.

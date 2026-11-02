@@ -59,17 +59,11 @@ func (b *tagBackstop) Poll(ctx context.Context, repoKey, lastBuiltTag string) (s
 	if !ok {
 		return "", errors.Errorf(ctx, "malformed repo key %q", repoKey)
 	}
-	tag, err := b.ghClient.GetLatestReleaseTag(ctx, repo)
+	tag, err := b.newestUnbuiltTag(ctx, repo, lastBuiltTag)
 	if err != nil {
-		return "", errors.Wrapf(ctx, err, "resolve latest release tag repo=%s", repoKey)
+		return "", errors.Wrapf(ctx, err, "resolve newest tag repo=%s", repoKey)
 	}
 	if tag == "" {
-		return "", nil
-	}
-	if tag == lastBuiltTag {
-		// Already handled. Silent on purpose: this is the steady state for
-		// every repo on every cycle, and logging it would bury the one cycle
-		// where the backstop actually fired.
 		return "", nil
 	}
 	if err := b.dispatcher.Dispatch(
@@ -83,4 +77,76 @@ func (b *tagBackstop) Poll(ctx context.Context, repoKey, lastBuiltTag string) (s
 		"github-release-watcher backstop handled repo=%s ref=%s", repoKey, build.TagRefPrefix+tag,
 	)
 	return tag, nil
+}
+
+// newestUnbuiltTag returns the tag to dispatch, or "" when nothing is newer
+// than lastBuiltTag.
+//
+// The ordering rule is the whole decision here. GitHub returns ListTags
+// newest-first in practice but guarantees nothing, so the first entry is a
+// candidate, not an answer: its committer epoch must beat lastBuiltTag's, and
+// when it does not, the rest of the page is scanned. Semver sorting is
+// deliberately NOT used — it drops non-semver tags (this fleet carries
+// "probe-version") and ranks a prerelease below its own release, so a re-cut
+// vX.Y.Z-rc1 would sort under vX.Y.Z and never dispatch.
+func (b *tagBackstop) newestUnbuiltTag(
+	ctx context.Context,
+	repo Repo,
+	lastBuiltTag string,
+) (string, error) {
+	tags, err := b.ghClient.ListTags(ctx, repo)
+	if err != nil {
+		return "", err
+	}
+	if len(tags) == 0 {
+		return "", nil
+	}
+	candidate := tags[0]
+	if candidate == lastBuiltTag {
+		// Already handled. Silent on purpose: this is the steady state for
+		// every repo on every cycle, and logging it would bury the one cycle
+		// where the backstop actually fired.
+		return "", nil
+	}
+	if lastBuiltTag == "" || !containsTag(tags, lastBuiltTag) {
+		// No baseline yet, or the cursor names a tag that no longer exists
+		// (deleted or rewound). Dispatching the newest self-heals the cursor,
+		// and the dispatcher is idempotent when the image already exists.
+		return candidate, nil
+	}
+	lastEpoch, err := b.ghClient.GetCommitEpoch(ctx, repo, lastBuiltTag)
+	if err != nil {
+		return "", errors.Wrapf(ctx, err, "epoch last built tag=%s", lastBuiltTag)
+	}
+	candidateEpoch, err := b.ghClient.GetCommitEpoch(ctx, repo, candidate)
+	if err != nil {
+		return "", errors.Wrapf(ctx, err, "epoch candidate tag=%s", candidate)
+	}
+	if candidateEpoch > lastEpoch {
+		return candidate, nil
+	}
+	// The ordering assumption did not hold for the first entry. Scan the page
+	// for anything genuinely newer; bounded at one page by design.
+	for _, tag := range tags[1:] {
+		if tag == lastBuiltTag {
+			continue
+		}
+		epoch, err := b.ghClient.GetCommitEpoch(ctx, repo, tag)
+		if err != nil {
+			return "", errors.Wrapf(ctx, err, "epoch candidate tag=%s", tag)
+		}
+		if epoch > lastEpoch {
+			return tag, nil
+		}
+	}
+	return "", nil
+}
+
+func containsTag(tags []string, want string) bool {
+	for _, tag := range tags {
+		if tag == want {
+			return true
+		}
+	}
+	return false
 }

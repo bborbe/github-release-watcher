@@ -23,6 +23,14 @@ var _ = Describe("TagBackstop", func() {
 		backstop   pkg.TagBackstop
 	)
 
+	// epochs wires GetCommitEpoch to a fixed tag→committer-date table, so a
+	// test can make API order and true recency disagree on purpose.
+	epochs := func(table map[string]int64) {
+		ghClient.GetCommitEpochStub = func(_ context.Context, _ pkg.Repo, ref string) (int64, error) {
+			return table[ref], nil
+		}
+	}
+
 	BeforeEach(func() {
 		ctx = context.Background()
 		ghClient = new(mocks.GitHubClient)
@@ -30,8 +38,8 @@ var _ = Describe("TagBackstop", func() {
 		backstop = pkg.NewTagBackstop(ghClient, dispatcher)
 	})
 
-	It("dispatches the newest release tag with the poll trigger", func() {
-		ghClient.GetLatestReleaseTagReturns("v1.2.3", nil)
+	It("dispatches the newest tag with the poll trigger on a cold cursor", func() {
+		ghClient.ListTagsReturns([]string{"v1.2.3", "v1.2.2"}, nil)
 
 		tag, err := backstop.Poll(ctx, "bborbe/example", "")
 		Expect(err).NotTo(HaveOccurred())
@@ -48,7 +56,7 @@ var _ = Describe("TagBackstop", func() {
 	It("stays silent for a tag it already handled", func() {
 		// Without this the backstop would re-dispatch every repo's tag on every
 		// cycle and inflate filter_skipped_total{reason="image_exists"}.
-		ghClient.GetLatestReleaseTagReturns("v1.2.3", nil)
+		ghClient.ListTagsReturns([]string{"v1.2.3", "v1.2.2"}, nil)
 
 		tag, err := backstop.Poll(ctx, "bborbe/example", "v1.2.3")
 		Expect(err).NotTo(HaveOccurred())
@@ -56,8 +64,50 @@ var _ = Describe("TagBackstop", func() {
 		Expect(dispatcher.DispatchCallCount()).To(Equal(0))
 	})
 
-	It("stays silent when the repo has published no release", func() {
-		ghClient.GetLatestReleaseTagReturns("", nil)
+	It("dispatches a tag whose commit is newer than the last built one", func() {
+		ghClient.ListTagsReturns([]string{"v1.3.0", "v1.2.3"}, nil)
+		epochs(map[string]int64{"v1.3.0": 200, "v1.2.3": 100})
+
+		tag, err := backstop.Poll(ctx, "bborbe/example", "v1.2.3")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(tag).To(Equal("v1.3.0"))
+	})
+
+	It("falls back to a later entry when API order and true recency disagree", func() {
+		// The ordering decision's core fixture: GitHub returned an older tag
+		// first and the newest one deeper in the page, so taking the first
+		// entry would have dispatched a stale build.
+		ghClient.ListTagsReturns([]string{"v1.2.2", "v1.3.0", "v1.2.3"}, nil)
+		epochs(map[string]int64{"v1.2.2": 50, "v1.3.0": 200, "v1.2.3": 100})
+
+		tag, err := backstop.Poll(ctx, "bborbe/example", "v1.2.3")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(tag).To(Equal("v1.3.0"),
+			"the first entry is a candidate, not an answer")
+	})
+
+	It("stays silent when no tag's commit is newer than the last built one", func() {
+		// Same commit under two tags: nothing new to build.
+		ghClient.ListTagsReturns([]string{"v1.2.3", "v1.2.3-hotfix"}, nil)
+		epochs(map[string]int64{"v1.2.3": 100, "v1.2.3-hotfix": 100})
+
+		tag, err := backstop.Poll(ctx, "bborbe/example", "v1.2.3")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(tag).To(BeEmpty())
+		Expect(dispatcher.DispatchCallCount()).To(Equal(0))
+	})
+
+	It("dispatches the newest tag when the cursor names a tag that no longer exists", func() {
+		// A deleted or rewound tag must not wedge the backstop forever.
+		ghClient.ListTagsReturns([]string{"v1.2.3", "v1.2.2"}, nil)
+
+		tag, err := backstop.Poll(ctx, "bborbe/example", "v1.1.0")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(tag).To(Equal("v1.2.3"))
+	})
+
+	It("stays silent when the repo has no tags", func() {
+		ghClient.ListTagsReturns(nil, nil)
 
 		tag, err := backstop.Poll(ctx, "bborbe/example", "")
 		Expect(err).NotTo(HaveOccurred())
@@ -66,7 +116,7 @@ var _ = Describe("TagBackstop", func() {
 	})
 
 	It("propagates a dispatch failure without recording the tag", func() {
-		ghClient.GetLatestReleaseTagReturns("v1.2.3", nil)
+		ghClient.ListTagsReturns([]string{"v1.2.3"}, nil)
 		dispatcher.DispatchReturns(errors.Errorf(ctx, "cluster unreachable"))
 
 		tag, err := backstop.Poll(ctx, "bborbe/example", "")
@@ -74,11 +124,21 @@ var _ = Describe("TagBackstop", func() {
 		Expect(tag).To(BeEmpty(), "a failed dispatch must not be recorded as handled")
 	})
 
-	It("propagates a GitHub lookup failure", func() {
-		ghClient.GetLatestReleaseTagReturns("", errors.Errorf(ctx, "rate limited"))
+	It("propagates a tag-listing failure", func() {
+		ghClient.ListTagsReturns(nil, errors.Errorf(ctx, "rate limited"))
 
 		_, err := backstop.Poll(ctx, "bborbe/example", "")
 		Expect(err).To(HaveOccurred())
+		Expect(dispatcher.DispatchCallCount()).To(Equal(0))
+	})
+
+	It("propagates an epoch lookup failure", func() {
+		ghClient.ListTagsReturns([]string{"v1.3.0", "v1.2.3"}, nil)
+		ghClient.GetCommitEpochReturns(0, errors.Errorf(ctx, "boom"))
+
+		_, err := backstop.Poll(ctx, "bborbe/example", "v1.2.3")
+		Expect(err).To(HaveOccurred())
+		Expect(dispatcher.DispatchCallCount()).To(Equal(0))
 	})
 })
 

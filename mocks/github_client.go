@@ -114,6 +114,20 @@ type GitHubClient struct {
 		result1 []pkg.Repo
 		result2 error
 	}
+	ListTagsStub        func(context.Context, pkg.Repo) ([]string, error)
+	listTagsMutex       sync.RWMutex
+	listTagsArgsForCall []struct {
+		arg1 context.Context
+		arg2 pkg.Repo
+	}
+	listTagsReturns struct {
+		result1 []string
+		result2 error
+	}
+	listTagsReturnsOnCall map[int]struct {
+		result1 []string
+		result2 error
+	}
 	RateLimitRemainingStub        func() int
 	rateLimitRemainingMutex       sync.RWMutex
 	rateLimitRemainingArgsForCall []struct {
@@ -582,6 +596,71 @@ func (fake *GitHubClient) ListReposReturnsOnCall(i int, result1 []pkg.Repo, resu
 	}
 	fake.listReposReturnsOnCall[i] = struct {
 		result1 []pkg.Repo
+		result2 error
+	}{result1, result2}
+}
+
+func (fake *GitHubClient) ListTags(arg1 context.Context, arg2 pkg.Repo) ([]string, error) {
+	fake.listTagsMutex.Lock()
+	ret, specificReturn := fake.listTagsReturnsOnCall[len(fake.listTagsArgsForCall)]
+	fake.listTagsArgsForCall = append(fake.listTagsArgsForCall, struct {
+		arg1 context.Context
+		arg2 pkg.Repo
+	}{arg1, arg2})
+	stub := fake.ListTagsStub
+	fakeReturns := fake.listTagsReturns
+	fake.recordInvocation("ListTags", []interface{}{arg1, arg2})
+	fake.listTagsMutex.Unlock()
+	if stub != nil {
+		return stub(arg1, arg2)
+	}
+	if specificReturn {
+		return ret.result1, ret.result2
+	}
+	return fakeReturns.result1, fakeReturns.result2
+}
+
+func (fake *GitHubClient) ListTagsCallCount() int {
+	fake.listTagsMutex.RLock()
+	defer fake.listTagsMutex.RUnlock()
+	return len(fake.listTagsArgsForCall)
+}
+
+func (fake *GitHubClient) ListTagsCalls(stub func(context.Context, pkg.Repo) ([]string, error)) {
+	fake.listTagsMutex.Lock()
+	defer fake.listTagsMutex.Unlock()
+	fake.ListTagsStub = stub
+}
+
+func (fake *GitHubClient) ListTagsArgsForCall(i int) (context.Context, pkg.Repo) {
+	fake.listTagsMutex.RLock()
+	defer fake.listTagsMutex.RUnlock()
+	argsForCall := fake.listTagsArgsForCall[i]
+	return argsForCall.arg1, argsForCall.arg2
+}
+
+func (fake *GitHubClient) ListTagsReturns(result1 []string, result2 error) {
+	fake.listTagsMutex.Lock()
+	defer fake.listTagsMutex.Unlock()
+	fake.ListTagsStub = nil
+	fake.listTagsReturns = struct {
+		result1 []string
+		result2 error
+	}{result1, result2}
+}
+
+func (fake *GitHubClient) ListTagsReturnsOnCall(i int, result1 []string, result2 error) {
+	fake.listTagsMutex.Lock()
+	defer fake.listTagsMutex.Unlock()
+	fake.ListTagsStub = nil
+	if fake.listTagsReturnsOnCall == nil {
+		fake.listTagsReturnsOnCall = make(map[int]struct {
+			result1 []string
+			result2 error
+		})
+	}
+	fake.listTagsReturnsOnCall[i] = struct {
+		result1 []string
 		result2 error
 	}{result1, result2}
 }
