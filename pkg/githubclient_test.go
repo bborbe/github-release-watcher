@@ -303,6 +303,29 @@ var _ = Describe("pkg.GitHubClient", func() {
 				Expect(err).To(MatchError(pkg.ErrRateLimited))
 			})
 		})
+
+		Context("server error (500)", func() {
+			It("wraps the error instead of reporting an empty repo", func() {
+				// A 5xx must not read as "no tags" — that is the silent-dead-path
+				// shape this client's 404 handling is deliberately narrow about.
+				server := httptest.NewServer(
+					http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+						w.Header().Set("Content-Type", "application/json")
+						w.WriteHeader(http.StatusInternalServerError)
+						fmt.Fprintf(w, `{"message":"Server Error"}`)
+					}),
+				)
+				defer server.Close()
+
+				client := pkg.NewGitHubClient(server.Client())
+				err := pkg.SetBaseURL(client, server.URL+"/")
+				Expect(err).NotTo(HaveOccurred())
+
+				tags, err := client.ListTags(ctx, pkg.Repo{Owner: "bborbe", Name: "docker-utils"})
+				Expect(err).To(HaveOccurred())
+				Expect(tags).To(BeNil())
+			})
+		})
 	})
 
 	Describe("GetChangelogContent", func() {

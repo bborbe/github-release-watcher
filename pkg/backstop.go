@@ -118,15 +118,19 @@ func (b *tagBackstop) newestUnbuiltTag(
 		// first — needs the API to reorder, which no observed response has done.
 		return "", nil
 	}
-	if lastBuiltTag == "" || !slices.Contains(tags, lastBuiltTag) {
-		// No baseline yet, or the cursor names a tag that no longer exists
-		// (deleted or rewound). Dispatching the newest self-heals the cursor,
-		// and the dispatcher is idempotent when the image already exists.
-		return candidate, nil
-	}
-	lastEpoch, err := b.ghClient.GetCommitEpoch(ctx, repo, lastBuiltTag)
-	if err != nil {
-		return "", errors.Wrapf(ctx, err, "epoch last built tag=%s", lastBuiltTag)
+	// -1 means "no baseline": either a cold cursor, or one naming a tag that is
+	// no longer on the page (deleted, rewound, or pushed past entry 100). Every
+	// real epoch is >= 0, so the scan below then simply takes the newest entry —
+	// which is what self-heals the cursor. Resolving a baseline here instead of
+	// trusting tags[0] is a one-time cost on a path that runs once, not the
+	// per-cycle cost the index-0 shortcut exists to avoid.
+	lastEpoch := int64(-1)
+	if lastBuiltTag != "" && slices.Contains(tags, lastBuiltTag) {
+		epoch, err := b.ghClient.GetCommitEpoch(ctx, repo, lastBuiltTag)
+		if err != nil {
+			return "", errors.Wrapf(ctx, err, "epoch last built tag=%s", lastBuiltTag)
+		}
+		lastEpoch = epoch
 	}
 	// Pick the MAXIMUM epoch on the page, not merely the first entry that beats
 	// the cursor. Trusting the first entry here would reintroduce the very
@@ -142,11 +146,12 @@ func (b *tagBackstop) newestUnbuiltTag(
 	// recover. Dispatching it also advances the cursor, so the tie does not
 	// become a repeated-scan steady state.
 	//
-	// Cost: this loop runs only when a tag other than the cursor is on the page,
-	// i.e. on the dispatch path, never in the steady state. It is bounded at one
-	// page (100 entries) and each iteration is one GetCommitEpoch round trip, so
-	// the context check below is what stops a cancelled cycle from spending the
-	// shared token on the rest of the page.
+	// Cost: bounded at one page (100 entries), one GetCommitEpoch per entry. The
+	// index-0 shortcut above keeps it off the common path, but it is NOT
+	// strictly a dispatch-only path: a tag whose commit predates the cursor (a
+	// probe tag cut on an old commit) leaves `best` empty and re-runs the scan
+	// every cycle until it leaves the page. That case logs below so the cost is
+	// visible rather than silent.
 	best := ""
 	var bestEpoch int64
 	for _, tag := range tags {

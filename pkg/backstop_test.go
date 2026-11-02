@@ -24,10 +24,14 @@ var _ = Describe("TagBackstop", func() {
 	)
 
 	// epochs wires GetCommitEpoch to a fixed tag→committer-date table, so a
-	// test can make API order and true recency disagree on purpose.
+	// test can make API order and true recency disagree on purpose. An unknown
+	// ref FAILS the test rather than defaulting to 0: a silent zero would stand
+	// in for a wrong-ref lookup and let a broken comparison pass.
 	epochs := func(table map[string]int64) {
 		ghClient.GetCommitEpochStub = func(_ context.Context, _ pkg.Repo, ref string) (int64, error) {
-			return table[ref], nil
+			epoch, ok := table[ref]
+			Expect(ok).To(BeTrue(), "unexpected GetCommitEpoch ref %q", ref)
+			return epoch, nil
 		}
 	}
 
@@ -40,6 +44,7 @@ var _ = Describe("TagBackstop", func() {
 
 	It("dispatches the newest tag with the poll trigger on a cold cursor", func() {
 		ghClient.ListTagsReturns([]string{"v1.2.3", "v1.2.2"}, nil)
+		epochs(map[string]int64{"v1.2.3": 200, "v1.2.2": 100})
 
 		tag, err := backstop.Poll(ctx, "bborbe/example", "")
 		Expect(err).NotTo(HaveOccurred())
@@ -137,6 +142,32 @@ var _ = Describe("TagBackstop", func() {
 		Expect(dispatcher.DispatchCallCount()).To(Equal(0))
 	})
 
+	It("stops the scan between entries when the context is cancelled mid-scan", func() {
+		// Cancelling on entry proves nothing about the loop; this cancels after
+		// the first candidate resolves and asserts the remaining tags are never
+		// looked up.
+		scanCtx, cancel := context.WithCancel(context.Background())
+		ghClient.ListTagsReturns([]string{"v1.2.2", "v1.2.1", "v1.2.3"}, nil)
+		candidateCalls := 0
+		ghClient.GetCommitEpochStub = func(_ context.Context, _ pkg.Repo, ref string) (int64, error) {
+			if ref == "v1.2.3" {
+				return 100, nil
+			}
+			candidateCalls++
+			if candidateCalls == 1 {
+				cancel()
+			}
+			return 50, nil
+		}
+
+		_, err := backstop.Poll(scanCtx, "bborbe/example", "v1.2.3")
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("cancelled"))
+		Expect(candidateCalls).To(Equal(1),
+			"the scan must stop before resolving the remaining entries")
+		Expect(dispatcher.DispatchCallCount()).To(Equal(0))
+	})
+
 	It("stops the fallback scan when the context is cancelled", func() {
 		// The scan is the only path that can spend a whole page of API calls, so
 		// a cancelled cycle must stop there rather than keep going.
@@ -153,6 +184,7 @@ var _ = Describe("TagBackstop", func() {
 	It("dispatches the newest tag when the cursor names a tag that no longer exists", func() {
 		// A deleted or rewound tag must not wedge the backstop forever.
 		ghClient.ListTagsReturns([]string{"v1.2.3", "v1.2.2"}, nil)
+		epochs(map[string]int64{"v1.2.3": 200, "v1.2.2": 100})
 
 		tag, err := backstop.Poll(ctx, "bborbe/example", "v1.1.0")
 		Expect(err).NotTo(HaveOccurred())
@@ -170,6 +202,7 @@ var _ = Describe("TagBackstop", func() {
 
 	It("propagates a dispatch failure without recording the tag", func() {
 		ghClient.ListTagsReturns([]string{"v1.2.3"}, nil)
+		epochs(map[string]int64{"v1.2.3": 200})
 		dispatcher.DispatchReturns(errors.Errorf(ctx, "cluster unreachable"))
 
 		tag, err := backstop.Poll(ctx, "bborbe/example", "")
