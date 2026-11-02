@@ -96,8 +96,8 @@ func ParseBuildConfig(ctx context.Context, raw []byte, repo string) (Config, err
 	return Config{
 		AutoBuild:       b.AutoBuild,
 		Destinations:    b.Destinations,
-		PushSecret:      b.PushSecret,
-		DeadlineSeconds: b.DeadlineSeconds,
+		PushSecret:      orDefault(b.PushSecret, DefaultPushSecret),
+		DeadlineSeconds: orDefaultInt(b.DeadlineSeconds, DefaultDeadlineSeconds),
 		Dockerfile:      b.Dockerfile,
 		ServicePath:     orDefault(b.ServicePath, repo),
 		ContextPath:     b.ContextPath,
@@ -108,6 +108,20 @@ func ParseBuildConfig(ctx context.Context, raw []byte, repo string) (Config, err
 // orDefault returns v, or fallback when v is empty.
 func orDefault(v, fallback string) string {
 	if v == "" {
+		return fallback
+	}
+	return v
+}
+
+// orDefaultInt returns v, or fallback when v is not positive.
+//
+// A zero here is not "leave the manifest's value alone": the renderer
+// substitutes it unconditionally, so zero would render
+// `activeDeadlineSeconds: 0`, which the API server rejects. The fallback is
+// what makes a `dockerBuild` block carrying only `autoBuild` and `destinations`
+// produce a valid Job.
+func orDefaultInt(v, fallback int) int {
+	if v <= 0 {
 		return fallback
 	}
 	return v

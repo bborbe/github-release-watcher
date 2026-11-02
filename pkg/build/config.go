@@ -100,6 +100,13 @@ var ErrBuildCapReached = stderrors.New("build concurrency cap reached")
 // number.
 const DefaultMaxConcurrentBuilds = 3
 
+// DefaultPushSecret mirrors the reference renderer's BUILD_PUSH_SECRET default
+// (`hack/build-cluster.sh` requires the value; the Makefile defaults it).
+const DefaultPushSecret = "buildkit-push"
+
+// DefaultDeadlineSeconds mirrors the reference renderer's BUILD_TIMEOUT default.
+const DefaultDeadlineSeconds = 3600
+
 // Validate rejects a config that cannot produce a Job.
 func (c Config) Validate(ctx context.Context) error {
 	if len(c.Destinations) == 0 {

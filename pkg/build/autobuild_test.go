@@ -75,6 +75,34 @@ dockerBuild:
 		Expect(cfg.ServicePath).To(Equal("bborbe/example"))
 	})
 
+	It("defaults pushSecret and deadlineSeconds from the reference renderer", func() {
+		// A repo that opts in with only autoBuild + destinations must still
+		// render a valid Job: the template's secret mount needs a name, and the
+		// renderer substitutes activeDeadlineSeconds unconditionally, so a zero
+		// would render `activeDeadlineSeconds: 0` and be rejected by the API
+		// server.
+		cfg, err := build.ParseBuildConfig(
+			ctx,
+			[]byte("dockerBuild:\n  autoBuild: true\n  destinations: [dockerhub]\n"),
+			"bborbe/example",
+		)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cfg.PushSecret).To(Equal(build.DefaultPushSecret))
+		Expect(cfg.DeadlineSeconds).To(Equal(build.DefaultDeadlineSeconds))
+	})
+
+	It("keeps an explicitly configured pushSecret and deadlineSeconds", func() {
+		cfg, err := build.ParseBuildConfig(
+			ctx,
+			[]byte("dockerBuild:\n  autoBuild: true\n  destinations: [dockerhub]\n"+
+				"  pushSecret: other-secret\n  deadlineSeconds: 1200\n"),
+			"bborbe/example",
+		)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cfg.PushSecret).To(Equal("other-secret"))
+		Expect(cfg.DeadlineSeconds).To(Equal(1200))
+	})
+
 	It("rejects a config with no destinations — there is no image to build", func() {
 		cfg, err := build.ParseBuildConfig(
 			ctx, []byte("dockerBuild:\n  autoBuild: true\n"), "bborbe/example",
