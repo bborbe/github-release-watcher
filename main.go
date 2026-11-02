@@ -129,6 +129,7 @@ func (a *application) Run(ctx context.Context, _ libsentry.Client) error {
 	dispatcher := factory.CreateBuildDispatcher(
 		ghClient,
 		libk8s.NewJobDeployer(clientset),
+		clientset,
 		httpClient,
 		metrics,
 	)

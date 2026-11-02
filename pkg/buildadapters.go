@@ -13,6 +13,9 @@ import (
 	"github.com/bborbe/github-release-watcher/pkg/build"
 	libk8s "github.com/bborbe/k8s"
 	batchv1 "k8s.io/api/batch/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/client-go/kubernetes"
 )
 
 // NewBuildManifestLoader adapts the GitHub client to build.ManifestLoader: it
@@ -80,6 +83,82 @@ func (c *buildJobCreator) Create(ctx context.Context, job batchv1.Job) error {
 		return errors.Wrapf(ctx, err, "deploy build job %s/%s", job.Namespace, job.Name)
 	}
 	return nil
+}
+
+// NewBuildCommitEpochProvider adapts the GitHub client to
+// build.CommitEpochProvider — the __SOURCE_DATE_EPOCH__ source.
+func NewBuildCommitEpochProvider(ghClient GitHubClient) build.CommitEpochProvider {
+	return &buildCommitEpochProvider{ghClient: ghClient}
+}
+
+type buildCommitEpochProvider struct {
+	ghClient GitHubClient
+}
+
+func (p *buildCommitEpochProvider) CommitEpoch(
+	ctx context.Context,
+	repo, ref string,
+) (int64, error) {
+	r, ok := repoFromKey(repo)
+	if !ok {
+		return 0, errors.Errorf(ctx, "malformed repo key %q", repo)
+	}
+	return p.ghClient.GetCommitEpoch(ctx, r, ref)
+}
+
+// BuildJobServiceAnnotation is the annotation carrying a build Job's
+// owner-qualified service path. An annotation rather than a label because the
+// value may contain "/", which a label value may not.
+const BuildJobServiceAnnotation = "build.benjamin-borbe.de/service"
+
+// NewBuildJobLister adapts the cluster clientset to build.JobLister.
+//
+// The list is filtered to non-terminal Jobs on purpose: completed Jobs linger
+// until ttlSecondsAfterFinished expires (3600s in the reference template), so a
+// bare label list would report an hour of finished builds as "active" and
+// suppress every legitimate re-run of the same tag.
+func NewBuildJobLister(clientset kubernetes.Interface) build.JobLister {
+	return &buildJobLister{clientset: clientset}
+}
+
+type buildJobLister struct {
+	clientset kubernetes.Interface
+}
+
+func (l *buildJobLister) ActiveByTag(
+	ctx context.Context,
+	tag string,
+) ([]build.ActiveJob, error) {
+	// Built from a Set rather than formatted into a string: the tag is the
+	// selector's value, and a value carrying `,` or `=` would otherwise
+	// terminate the requirement and widen the match — silently defeating the
+	// dedupe. NewRequirement validates the value and returns an error instead.
+	selector := labels.Set{
+		"app.kubernetes.io/component": "build",
+		"app.kubernetes.io/version":   tag,
+	}.AsSelector()
+
+	list, err := l.clientset.BatchV1().Jobs(build.DefaultBuildNamespace).List(
+		ctx,
+		metav1.ListOptions{LabelSelector: selector.String()},
+	)
+	if err != nil {
+		return nil, errors.Wrapf(ctx, err, "list build jobs tag=%s", tag)
+	}
+	active := make([]build.ActiveJob, 0, len(list.Items))
+	for _, job := range list.Items {
+		if job.Status.Succeeded > 0 || job.Status.Failed > 0 {
+			continue
+		}
+		if job.DeletionTimestamp != nil {
+			continue
+		}
+		active = append(active, build.ActiveJob{
+			Name:    job.Name,
+			Service: job.Annotations[BuildJobServiceAnnotation],
+		})
+	}
+	return active, nil
 }
 
 // repoFromKey splits an "owner/name" key into a Repo.

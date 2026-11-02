@@ -25,6 +25,7 @@ import (
 	"github.com/bborbe/log"
 	"github.com/bborbe/run"
 	libtime "github.com/bborbe/time"
+	"k8s.io/client-go/kubernetes"
 
 	lib "github.com/bborbe/maintainer"
 )
@@ -156,16 +157,19 @@ func CreateWebhookHandler(
 func CreateBuildDispatcher(
 	ghClient pkg.GitHubClient,
 	jobDeployer libk8s.JobDeployer,
+	clientset kubernetes.Interface,
 	httpClient *http.Client,
 	metrics pkg.Metrics,
 ) build.Dispatcher {
-	return build.NewDispatcher(
-		pkg.NewBuildManifestLoader(ghClient),
-		pkg.NewBuildJobCreator(jobDeployer),
-		build.NewRegistryImageChecker(httpClient),
-		build.NewAutoBuildGate(pkg.NewBuildFileFetcher(ghClient)),
-		metrics,
-	)
+	return build.NewDispatcher(build.Deps{
+		Manifests:  pkg.NewBuildManifestLoader(ghClient),
+		Jobs:       pkg.NewBuildJobCreator(jobDeployer),
+		Images:     build.NewRegistryImageChecker(httpClient),
+		Configs:    build.NewConfigProvider(pkg.NewBuildFileFetcher(ghClient)),
+		Epochs:     pkg.NewBuildCommitEpochProvider(ghClient),
+		ActiveJobs: pkg.NewBuildJobLister(clientset),
+		Metrics:    metrics,
+	})
 }
 
 // CreateCommandConsumer wires a run.Func that consumes TriggerReleaseCheckCommand

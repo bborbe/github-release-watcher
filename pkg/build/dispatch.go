@@ -12,6 +12,7 @@ import (
 	"github.com/bborbe/errors"
 	"github.com/golang/glog"
 	batchv1 "k8s.io/api/batch/v1"
+	"k8s.io/apimachinery/pkg/util/validation"
 )
 
 // Trigger names what caused a build dispatch. It is carried on the dispatch
@@ -53,6 +54,19 @@ func (r Request) Validate(ctx context.Context) error {
 	if r.Tag == "" {
 		return errors.Errorf(ctx, "build request missing tag for repo=%s", r.Repo)
 	}
+	// The tag becomes a label VALUE twice over — `app.kubernetes.io/version` in
+	// the rendered Job and the same key in the dedupe selector — so a tag git
+	// accepts but a label value does not (`v1.0.0+build`) would be rejected by
+	// the API server after the whole manifest was built, and one carrying a
+	// comma or `=` would silently break the selector and let a second build
+	// through. Rejecting here fails once, early, and names the reason.
+	if errs := validation.IsValidLabelValue(r.Tag); len(errs) > 0 {
+		return errors.Errorf(
+			ctx,
+			"build request tag %q is not a valid Kubernetes label value repo=%s: %s",
+			r.Tag, r.Repo, strings.Join(errs, "; "),
+		)
+	}
 	return nil
 }
 
@@ -61,18 +75,28 @@ func (r Request) Ref() string {
 	return TagRefPrefix + r.Tag
 }
 
+// ServicePath returns the owner-qualified service identity for the request.
+//
+// Owner-qualified on purpose: the canonical template defaults
+// __SERVICE_PATH__ to the image basename, which makes two repos sharing a
+// basename indistinguishable in the Job annotation the dedupe reads back.
+func (r Request) ServicePath() string {
+	return r.Repo
+}
+
 //counterfeiter:generate -o ../../mocks/build_dispatcher.go --fake-name BuildDispatcher . Dispatcher
 
 // Dispatcher dispatches at most one build per (repo, tag).
 //
-// Implementations must be idempotent: the webhook path and the poll backstop
-// routinely see the same tag, and a re-dispatch must not create a second Job
-// nor fail the cycle.
+// Idempotency is a pre-create lookup, not a name collision: Job names are unique
+// per run so a legitimate re-run of a still-non-terminal tag is possible at all,
+// which means the dedupe has to ask the cluster rather than rely on Create
+// failing.
 type Dispatcher interface {
 	// Dispatch runs the pre-flight gates and, when they pass, creates the
-	// build Job. A skip (no auto-build opt-in, no manifest, image already
-	// present, registry unreachable) is a nil error — the cycle succeeded,
-	// it simply built nothing.
+	// build Job. A skip (no auto-build opt-in, no manifest, unrendered token,
+	// image already present, registry unreachable, cap reached) is a nil error
+	// — the cycle succeeded, it simply built nothing.
 	Dispatch(ctx context.Context, req Request, trigger Trigger) error
 }
 
@@ -111,64 +135,46 @@ type ImageChecker interface {
 	Exists(ctx context.Context, imageRef string) (bool, error)
 }
 
-//counterfeiter:generate -o ../../mocks/build_auto_build_gate.go --fake-name BuildAutoBuildGate . AutoBuildGate
-
-// AutoBuildGate reports whether a repo opted into automatic builds.
-//
-// The gate is opt-in: an absent or false `dockerBuild.autoBuild` in
-// `.maintainer.yaml` means the repo is not built. Without it every tag of every
-// allowlisted repo would fire a build.
-type AutoBuildGate interface {
-	Enabled(ctx context.Context, repo string) (bool, error)
-}
-
 //counterfeiter:generate -o ../../mocks/build_metrics.go --fake-name BuildMetrics . Metrics
 
 // Metrics is the narrow slice of watcher metrics the dispatcher records.
-//
-// IncFilterSkipped carries the two design-mandated reasons
-// ("image_exists" | "registry_unreachable") — the same counter the poll
-// filters already use, so one query answers "what did the watcher skip and
-// why" across both paths.
 type Metrics interface {
 	// IncFilterSkipped — reason: "image_exists" | "registry_unreachable"
 	IncFilterSkipped(reason string)
-	// IncBuildDispatched — result: "created" | "exists" | "skipped" | "error"
+	// IncBuildDispatched — result: "created" | "exists" | "skipped" | "deferred" | "error"
 	IncBuildDispatched(result string)
 }
 
+// Deps is the dispatcher's dependency set.
+type Deps struct {
+	Manifests     ManifestLoader
+	Jobs          JobCreator
+	Images        ImageChecker
+	Configs       ConfigProvider
+	Epochs        CommitEpochProvider
+	ActiveJobs    JobLister
+	Metrics       Metrics
+	MaxConcurrent int
+}
+
 // NewDispatcher wires the dispatch pipeline.
-func NewDispatcher(
-	manifests ManifestLoader,
-	jobs JobCreator,
-	images ImageChecker,
-	gate AutoBuildGate,
-	metrics Metrics,
-) Dispatcher {
-	return &dispatcher{
-		manifests: manifests,
-		jobs:      jobs,
-		images:    images,
-		gate:      gate,
-		metrics:   metrics,
+func NewDispatcher(d Deps) Dispatcher {
+	if d.MaxConcurrent <= 0 {
+		d.MaxConcurrent = DefaultMaxConcurrentBuilds
 	}
+	return &dispatcher{deps: d}
 }
 
 type dispatcher struct {
-	manifests ManifestLoader
-	jobs      JobCreator
-	images    ImageChecker
-	gate      AutoBuildGate
-	metrics   Metrics
+	deps Deps
 }
 
 // Dispatch implements Dispatcher.
 //
 // Order matters and mirrors the design record: opt-in gate, manifest, render,
-// registry pre-flight, create. The registry check sits *after* rendering
-// because the image reference it needs is only knowable once the tag has been
-// substituted into the repo's own Job spec — asking the caller to know the
-// image name up front would duplicate the recipe.
+// registry pre-flight, dedupe, cap, create. The registry check sits *after*
+// rendering because the image reference it needs is only knowable once the tag
+// has been substituted into the repo's own Job spec.
 func (d *dispatcher) Dispatch(ctx context.Context, req Request, trigger Trigger) error {
 	if err := req.Validate(ctx); err != nil {
 		return err
@@ -180,8 +186,7 @@ func (d *dispatcher) Dispatch(ctx context.Context, req Request, trigger Trigger)
 	return d.create(ctx, req, job, imageRef, trigger)
 }
 
-// prepare runs the gates that decide whether a build should happen at all:
-// the opt-in, the manifest, the render, and the registry pre-flight. It
+// prepare runs the gates that decide whether a build should happen at all. It
 // returns proceed=false when a gate legitimately says "build nothing" — that
 // is a successful cycle, not an error.
 func (d *dispatcher) prepare(
@@ -189,53 +194,53 @@ func (d *dispatcher) prepare(
 	req Request,
 	trigger Trigger,
 ) (batchv1.Job, string, bool, error) {
-	enabled, err := d.gate.Enabled(ctx, req.Repo)
+	cfg, err := d.deps.Configs.Config(ctx, req.Repo)
 	if err != nil {
 		return batchv1.Job{}, "", false,
-			errors.Wrapf(ctx, err, "resolve auto-build gate repo=%s", req.Repo)
+			errors.Wrapf(ctx, err, "resolve build config repo=%s", req.Repo)
 	}
-	if !enabled {
-		d.metrics.IncBuildDispatched("skipped")
-		glog.V(2).Infof(
-			"github-release-watcher build skipped repo=%s ref=%s trigger=%s reason=no_auto_build",
-			req.Repo, req.Ref(), trigger,
-		)
-		return batchv1.Job{}, "", false, nil
+	if !cfg.AutoBuild {
+		return d.skip(req, trigger, "no_auto_build")
+	}
+	if err := cfg.Validate(ctx); err != nil {
+		return d.skip(req, trigger, "no_build_config")
 	}
 
-	raw, err := d.manifests.LoadBuildJobManifest(ctx, req.Repo, req.Tag)
+	// The destination is a named class, so it resolves to a registry host
+	// before anything renders: the same resolved repository feeds both the
+	// Job's image reference and the pre-flight probe, and a mismatch between
+	// the two would either build an image nobody pulls or probe a registry that
+	// never has it.
+	imageRepo, err := cfg.ImageRepositoryFor(ctx, req.Repo)
+	if err != nil {
+		return d.skip(req, trigger, "unknown_destination")
+	}
+
+	raw, err := d.deps.Manifests.LoadBuildJobManifest(ctx, req.Repo, req.Tag)
 	if err != nil {
 		return batchv1.Job{}, "", false,
 			errors.Wrapf(ctx, err, "load build job manifest repo=%s tag=%s", req.Repo, req.Tag)
 	}
 	if len(raw) == 0 {
-		d.metrics.IncBuildDispatched("skipped")
-		glog.V(2).Infof(
-			"github-release-watcher build skipped repo=%s ref=%s trigger=%s reason=no_build_manifest",
-			req.Repo, req.Ref(), trigger,
-		)
-		return batchv1.Job{}, "", false, nil
+		return d.skip(req, trigger, "no_build_manifest")
 	}
 
-	job, err := RenderJob(ctx, raw, req)
+	job, err := d.render(ctx, raw, req, cfg, imageRepo)
 	if err != nil {
+		if stderrors.Is(err, ErrUnrenderedToken) {
+			return d.skip(req, trigger, "unrendered_token")
+		}
 		return batchv1.Job{}, "", false, err
 	}
 
-	imageRef := JobImage(job)
-	if imageRef == "" {
-		return batchv1.Job{}, "", false, errors.Errorf(
-			ctx, "build job for repo=%s tag=%s names no container image", req.Repo, req.Tag,
-		)
-	}
-
-	exists, err := d.images.Exists(ctx, imageRef)
+	imageRef := ImageReference(imageRepo, req.Tag)
+	exists, err := d.deps.Images.Exists(ctx, imageRef)
 	if err != nil {
 		// Fail closed: an unreachable registry must never be read as "the
 		// image is absent, build it". Re-pushing an existing tag produces a
 		// mutable tag pointing at different content — the exact failure this
 		// guard exists to prevent.
-		d.metrics.IncFilterSkipped("registry_unreachable")
+		d.deps.Metrics.IncFilterSkipped("registry_unreachable")
 		glog.Warningf(
 			"github-release-watcher build skipped repo=%s ref=%s trigger=%s reason=registry_unreachable image=%s err=%v",
 			req.Repo,
@@ -247,7 +252,7 @@ func (d *dispatcher) prepare(
 		return batchv1.Job{}, "", false, nil
 	}
 	if exists {
-		d.metrics.IncFilterSkipped("image_exists")
+		d.deps.Metrics.IncFilterSkipped("image_exists")
 		glog.V(2).Infof(
 			"github-release-watcher build skipped repo=%s ref=%s trigger=%s reason=image_exists image=%s",
 			req.Repo, req.Ref(), trigger, imageRef,
@@ -255,12 +260,94 @@ func (d *dispatcher) prepare(
 		return batchv1.Job{}, "", false, nil
 	}
 
+	return d.admit(ctx, req, trigger, job, imageRef)
+}
+
+// render assembles the canonical render params and substitutes them.
+func (d *dispatcher) render(
+	ctx context.Context,
+	raw []byte,
+	req Request,
+	cfg Config,
+	imageRepo string,
+) (batchv1.Job, error) {
+	epoch, err := d.deps.Epochs.CommitEpoch(ctx, req.Repo, req.Ref())
+	if err != nil {
+		return batchv1.Job{}, errors.Wrapf(
+			ctx, err, "resolve commit epoch repo=%s ref=%s", req.Repo, req.Ref(),
+		)
+	}
+	return RenderJob(ctx, raw, RenderParams{
+		JobName:         NewJobName(req.Repo, req.Tag),
+		RepoURL:         RepoURL(req.Repo),
+		Ref:             req.Ref(),
+		Tag:             req.Tag,
+		Dockerfile:      cfg.Dockerfile,
+		Image:           imageRepo,
+		Push:            true,
+		PushSecret:      cfg.PushSecret,
+		DeadlineSeconds: cfg.DeadlineSeconds,
+		SourceDateEpoch: epoch,
+		ServicePath:     req.ServicePath(),
+		ContextPath:     cfg.ContextPath,
+		DockerfilePath:  cfg.DockerfilePath,
+	})
+}
+
+// admit applies the dedupe and the concurrency cap, both of which read the
+// cluster rather than the manifest.
+func (d *dispatcher) admit(
+	ctx context.Context,
+	req Request,
+	trigger Trigger,
+	job batchv1.Job,
+	imageRef string,
+) (batchv1.Job, string, bool, error) {
+	active, err := d.deps.ActiveJobs.ActiveByTag(ctx, req.Tag)
+	if err != nil {
+		return batchv1.Job{}, "", false,
+			errors.Wrapf(ctx, err, "list active build jobs tag=%s", req.Tag)
+	}
+	for _, a := range active {
+		if a.Service != req.ServicePath() {
+			continue
+		}
+		d.deps.Metrics.IncBuildDispatched("exists")
+		glog.V(2).Infof(
+			"github-release-watcher build dispatched repo=%s ref=%s trigger=%s image=%s job=%s namespace=%s result=job-exists",
+			req.Repo, req.Ref(), trigger, imageRef, a.Name, job.Namespace,
+		)
+		return batchv1.Job{}, "", false, nil
+	}
+	if len(active) >= d.deps.MaxConcurrent {
+		// A queue, not a failure: the tag is not going away, so the next poll
+		// cycle retries. Recorded distinctly so an operator can tell a busy
+		// cluster from a broken dispatcher.
+		d.deps.Metrics.IncBuildDispatched("deferred")
+		glog.V(2).Infof(
+			"github-release-watcher build deferred repo=%s ref=%s trigger=%s reason=build_cap_reached active=%d cap=%d",
+			req.Repo, req.Ref(), trigger, len(active), d.deps.MaxConcurrent,
+		)
+		return batchv1.Job{}, "", false, nil
+	}
 	return job, imageRef, true, nil
 }
 
-// create applies the rendered Job, absorbing an already-present Job as a
-// successful no-op: the Job is the idempotency key for (repo, tag), so a
-// repeat dispatch of the same tag must not fail the cycle nor build twice.
+// skip records a legitimate "build nothing" outcome.
+func (d *dispatcher) skip(
+	req Request,
+	trigger Trigger,
+	reason string,
+) (batchv1.Job, string, bool, error) {
+	d.deps.Metrics.IncBuildDispatched("skipped")
+	glog.V(2).Infof(
+		"github-release-watcher build skipped repo=%s ref=%s trigger=%s reason=%s",
+		req.Repo, req.Ref(), trigger, reason,
+	)
+	return batchv1.Job{}, "", false, nil
+}
+
+// create applies the rendered Job.
 func (d *dispatcher) create(
 	ctx context.Context,
 	req Request,
@@ -268,27 +355,42 @@ func (d *dispatcher) create(
 	imageRef string,
 	trigger Trigger,
 ) error {
-	if err := d.jobs.Create(ctx, job); err != nil {
+	if err := d.deps.Jobs.Create(ctx, job); err != nil {
 		if stderrors.Is(err, ErrJobAlreadyExists) {
-			d.metrics.IncBuildDispatched("exists")
-			glog.V(2).Infof(
-				"github-release-watcher build dispatched repo=%s ref=%s trigger=%s image=%s job=%s namespace=%s result=job-exists",
-				req.Repo, req.Ref(), trigger, imageRef, job.Name, job.Namespace,
-			)
+			d.deps.Metrics.IncBuildDispatched("exists")
 			return nil
 		}
-		d.metrics.IncBuildDispatched("error")
+		d.deps.Metrics.IncBuildDispatched("error")
 		return errors.Wrapf(
 			ctx, err, "create build job repo=%s tag=%s job=%s", req.Repo, req.Tag, job.Name,
 		)
 	}
 
-	d.metrics.IncBuildDispatched("created")
+	d.deps.Metrics.IncBuildDispatched("created")
 	glog.V(2).Infof(
 		"github-release-watcher build dispatched repo=%s ref=%s trigger=%s image=%s job=%s namespace=%s",
 		req.Repo, req.Ref(), trigger, imageRef, job.Name, job.Namespace,
 	)
 	return nil
+}
+
+// ImageReference joins an image repository and a tag.
+//
+// The tag check looks only at the last path segment. A registry host may carry
+// a port — the in-house registry is `docker.prod.nuke.benjamin-borbe.de:443` —
+// so a colon anywhere in the reference is part of the host, not a tag, and
+// reading it as one would hand the build a tagless reference and the pre-flight
+// probe a repository instead of an image.
+func ImageReference(image, tag string) string {
+	if strings.Contains(image[strings.LastIndex(image, "/")+1:], ":") {
+		return image
+	}
+	return image + ":" + tag
+}
+
+// RepoURL returns the clone URL for a repo key.
+func RepoURL(repo string) string {
+	return "https://github.com/" + repo + ".git"
 }
 
 // JobImage returns the image reference of the Job's first container, or "".

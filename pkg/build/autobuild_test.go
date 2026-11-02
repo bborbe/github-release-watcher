@@ -12,7 +12,7 @@ import (
 	. "github.com/onsi/gomega"
 )
 
-var _ = Describe("ParseAutoBuild", func() {
+var _ = Describe("ParseBuildConfig", func() {
 	var ctx context.Context
 
 	BeforeEach(func() {
@@ -21,9 +21,9 @@ var _ = Describe("ParseAutoBuild", func() {
 
 	DescribeTable("reads the dockerBuild.autoBuild opt-in",
 		func(raw string, expected bool) {
-			enabled, err := build.ParseAutoBuild(ctx, []byte(raw))
+			cfg, err := build.ParseBuildConfig(ctx, []byte(raw), "bborbe/example")
 			Expect(err).NotTo(HaveOccurred())
-			Expect(enabled).To(Equal(expected))
+			Expect(cfg.AutoBuild).To(Equal(expected))
 		},
 		Entry("opted in", "dockerBuild:\n  autoBuild: true\n", true),
 		Entry("explicitly off", "dockerBuild:\n  autoBuild: false\n", false),
@@ -34,7 +34,80 @@ var _ = Describe("ParseAutoBuild", func() {
 	It("returns an error for malformed YAML rather than reading it as 'off'", func() {
 		// A typo in the opt-in must be visible; silently treating it as "not
 		// opted in" is how a repo ends up never building with no explanation.
-		_, err := build.ParseAutoBuild(ctx, []byte("dockerBuild: [not a map"))
+		_, err := build.ParseBuildConfig(ctx, []byte("dockerBuild: [not a map"), "bborbe/example")
 		Expect(err).To(HaveOccurred())
+	})
+
+	It("carries the whole dockerBuild block, not just the opt-in", func() {
+		// Every template token the repo can vary comes from here, so a field
+		// dropped in parsing becomes a literal placeholder in a real Job.
+		cfg, err := build.ParseBuildConfig(ctx, []byte(`
+dockerBuild:
+  autoBuild: true
+  destinations:
+    - dockerhub
+  pushSecret: registry-secret
+  deadlineSeconds: 900
+  dockerfile: Containerfile
+  servicePath: bborbe/example/sub
+  contextPath: /src/sub
+  dockerfilePath: /src/sub
+`), "bborbe/example")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cfg.AutoBuild).To(BeTrue())
+		Expect(cfg.Destinations).To(Equal([]string{"dockerhub"}))
+		Expect(cfg.PushSecret).To(Equal("registry-secret"))
+		Expect(cfg.DeadlineSeconds).To(Equal(900))
+		Expect(cfg.Dockerfile).To(Equal("Containerfile"))
+		Expect(cfg.ServicePath).To(Equal("bborbe/example/sub"))
+		Expect(cfg.ContextPath).To(Equal("/src/sub"))
+		Expect(cfg.DockerfilePath).To(Equal("/src/sub"))
+	})
+
+	It("defaults servicePath to the owner-qualified repo key", func() {
+		// The template defaults __SERVICE_PATH__ to the image basename, which
+		// makes two repos sharing a basename indistinguishable. The dispatcher
+		// must never let that default through.
+		cfg, err := build.ParseBuildConfig(
+			ctx, []byte("dockerBuild:\n  autoBuild: true\n"), "bborbe/example",
+		)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cfg.ServicePath).To(Equal("bborbe/example"))
+	})
+
+	It("defaults pushSecret and deadlineSeconds from the reference renderer", func() {
+		// A repo that opts in with only autoBuild + destinations must still
+		// render a valid Job: the template's secret mount needs a name, and the
+		// renderer substitutes activeDeadlineSeconds unconditionally, so a zero
+		// would render `activeDeadlineSeconds: 0` and be rejected by the API
+		// server.
+		cfg, err := build.ParseBuildConfig(
+			ctx,
+			[]byte("dockerBuild:\n  autoBuild: true\n  destinations: [dockerhub]\n"),
+			"bborbe/example",
+		)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cfg.PushSecret).To(Equal(build.DefaultPushSecret))
+		Expect(cfg.DeadlineSeconds).To(Equal(build.DefaultDeadlineSeconds))
+	})
+
+	It("keeps an explicitly configured pushSecret and deadlineSeconds", func() {
+		cfg, err := build.ParseBuildConfig(
+			ctx,
+			[]byte("dockerBuild:\n  autoBuild: true\n  destinations: [dockerhub]\n"+
+				"  pushSecret: other-secret\n  deadlineSeconds: 1200\n"),
+			"bborbe/example",
+		)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cfg.PushSecret).To(Equal("other-secret"))
+		Expect(cfg.DeadlineSeconds).To(Equal(1200))
+	})
+
+	It("rejects a config with no destinations — there is no image to build", func() {
+		cfg, err := build.ParseBuildConfig(
+			ctx, []byte("dockerBuild:\n  autoBuild: true\n"), "bborbe/example",
+		)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cfg.Validate(ctx)).To(HaveOccurred())
 	})
 })
