@@ -14,6 +14,7 @@ import (
 	"github.com/bborbe/errors"
 	"github.com/bborbe/github-release-watcher/pkg/build"
 	libk8s "github.com/bborbe/k8s"
+	"github.com/golang/glog"
 	batchv1 "k8s.io/api/batch/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -237,8 +238,21 @@ func (r *buildCredentialReader) Credentials(
 		if username == "" && password == "" {
 			continue
 		}
+		// Says only WHICH host matched — never a value, a length or a prefix.
+		// This line exists because "the probe still fails" cannot be split into
+		// "no credentials were found" and "credentials were sent and the
+		// registry still refused" without it, and those two have different
+		// fixes: a new Secret versus a network problem.
+		glog.V(2).Infof(
+			"github-release-watcher registry credentials resolved secret=%s/%s registry=%s key=%s",
+			namespace, secretName, ref.Registry, key,
+		)
 		return build.Credentials{Username: username, Password: password}, nil
 	}
+	glog.V(2).Infof(
+		"github-release-watcher registry credentials none matched secret=%s/%s registry=%s tried=%v",
+		namespace, secretName, ref.Registry, registryAuthKeys(ref.Registry),
+	)
 	return build.Credentials{}, nil
 }
 
