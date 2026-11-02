@@ -130,7 +130,6 @@ func (a *application) Run(ctx context.Context, _ libsentry.Client) error {
 		ghClient,
 		libk8s.NewJobDeployer(clientset),
 		clientset,
-		httpClient,
 		metrics,
 	)
 

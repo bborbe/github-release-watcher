@@ -7,7 +7,6 @@ package factory
 
 import (
 	"context"
-	"net/http"
 	"time"
 
 	task "github.com/bborbe/agent/command/task"
@@ -152,19 +151,24 @@ func CreateWebhookHandler(
 // the rate-capturing/logging round tripper and emitting every non-2xx line
 // twice, which is exactly the diagnostic the transport exists to provide.
 //
-// The registry checker gets the bare http.Client: registry requests carry no
-// GitHub credentials and must not be wrapped by the rate-capturing transport.
+// The registry checker deliberately gets NO client and builds its own plain
+// one. It must not share the GitHub App client: that client's RoundTripper sets
+// `Authorization: token <installation-token>` on every request it forwards, so
+// the registry probe's own Basic credential is overwritten and the registry
+// answers 401 — which the fail-closed pre-flight then reports as
+// `registry_unreachable` for an image that is perfectly reachable. Taking the
+// client as a parameter made that mistake available; not taking it makes it
+// unavailable.
 func CreateBuildDispatcher(
 	ghClient pkg.GitHubClient,
 	jobDeployer libk8s.JobDeployer,
 	clientset kubernetes.Interface,
-	httpClient *http.Client,
 	metrics pkg.Metrics,
 ) build.Dispatcher {
 	return build.NewDispatcher(build.Deps{
 		Manifests:   pkg.NewBuildManifestLoader(ghClient),
 		Jobs:        pkg.NewBuildJobCreator(jobDeployer),
-		Images:      build.NewRegistryImageChecker(httpClient),
+		Images:      build.NewRegistryImageChecker(nil),
 		Credentials: pkg.NewBuildCredentialReader(clientset),
 		Configs:     build.NewConfigProvider(pkg.NewBuildFileFetcher(ghClient)),
 		Epochs:      pkg.NewBuildCommitEpochProvider(ghClient),
