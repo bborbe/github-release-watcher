@@ -201,6 +201,13 @@ func (r *buildCredentialReader) Credentials(
 	)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
+			// One of the two "no credentials were found" states. It must say so:
+			// silence here is indistinguishable from the bug this diagnostic
+			// exists to explain.
+			glog.V(2).Infof(
+				"github-release-watcher registry credentials none matched secret=%s/%s registry=%s reason=secret_not_found",
+				namespace, secretName, ref.Registry,
+			)
 			return build.Credentials{}, nil
 		}
 		return build.Credentials{}, errors.Wrapf(
@@ -209,6 +216,10 @@ func (r *buildCredentialReader) Credentials(
 	}
 	raw, ok := secret.Data[dockerConfigJSONKey]
 	if !ok {
+		glog.V(2).Infof(
+			"github-release-watcher registry credentials none matched secret=%s/%s registry=%s reason=no_dockerconfigjson_key",
+			namespace, secretName, ref.Registry,
+		)
 		return build.Credentials{}, nil
 	}
 	var cfg struct {
@@ -224,11 +235,17 @@ func (r *buildCredentialReader) Credentials(
 			ctx, err, "decode push secret %s/%s", namespace, secretName,
 		)
 	}
+	// entryFound separates "the Secret has no entry for this registry" (add
+	// one) from "it has one but it carries nothing usable" (populate it) —
+	// different fixes, and `tried=` alone cannot tell them apart because it
+	// lists candidates whether or not they are present.
+	entryFound := false
 	for _, key := range registryAuthKeys(ref.Registry) {
 		entry, ok := cfg.Auths[key]
 		if !ok {
 			continue
 		}
+		entryFound = true
 		username, password := entry.Username, entry.Password
 		if entry.Auth != "" {
 			if u, p, ok := decodeDockerAuth(entry.Auth); ok {
@@ -250,8 +267,8 @@ func (r *buildCredentialReader) Credentials(
 		return build.Credentials{Username: username, Password: password}, nil
 	}
 	glog.V(2).Infof(
-		"github-release-watcher registry credentials none matched secret=%s/%s registry=%s tried=%v",
-		namespace, secretName, ref.Registry, registryAuthKeys(ref.Registry),
+		"github-release-watcher registry credentials none matched secret=%s/%s registry=%s entry_found=%t tried=%v",
+		namespace, secretName, ref.Registry, entryFound, registryAuthKeys(ref.Registry),
 	)
 	return build.Credentials{}, nil
 }
