@@ -260,6 +260,20 @@ var _ = Describe("Dispatcher", func() {
 		Expect(err).To(HaveOccurred())
 		Expect(jobs.CreateCallCount()).To(Equal(0))
 	})
+
+	It("rejects a tag that is not a valid label value", func() {
+		// The tag becomes app.kubernetes.io/version in the rendered Job and the
+		// same key in the dedupe selector. A comma or `=` would break the
+		// selector and let a second build through; `+` is valid in a git tag but
+		// not in a label value, so the Job would be rejected after rendering.
+		err := dispatcher.Dispatch(
+			ctx, build.Request{Repo: "bborbe/example", Tag: "v1.2.3+build.7"},
+			build.TriggerWebhook,
+		)
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("not a valid Kubernetes label value"))
+		Expect(jobs.CreateCallCount()).To(Equal(0))
+	})
 })
 
 var _ = Describe("Request", func() {

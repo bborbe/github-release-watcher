@@ -7,7 +7,6 @@ package pkg
 import (
 	"context"
 	stderrors "errors"
-	"fmt"
 	"strings"
 
 	"github.com/bborbe/errors"
@@ -15,6 +14,7 @@ import (
 	libk8s "github.com/bborbe/k8s"
 	batchv1 "k8s.io/api/batch/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/kubernetes"
 )
 
@@ -129,13 +129,18 @@ func (l *buildJobLister) ActiveByTag(
 	ctx context.Context,
 	tag string,
 ) ([]build.ActiveJob, error) {
+	// Built from a Set rather than formatted into a string: the tag is the
+	// selector's value, and a value carrying `,` or `=` would otherwise
+	// terminate the requirement and widen the match — silently defeating the
+	// dedupe. NewRequirement validates the value and returns an error instead.
+	selector := labels.Set{
+		"app.kubernetes.io/component": "build",
+		"app.kubernetes.io/version":   tag,
+	}.AsSelector()
+
 	list, err := l.clientset.BatchV1().Jobs(build.DefaultBuildNamespace).List(
 		ctx,
-		metav1.ListOptions{
-			LabelSelector: fmt.Sprintf(
-				"app.kubernetes.io/component=build,app.kubernetes.io/version=%s", tag,
-			),
-		},
+		metav1.ListOptions{LabelSelector: selector.String()},
 	)
 	if err != nil {
 		return nil, errors.Wrapf(ctx, err, "list build jobs tag=%s", tag)

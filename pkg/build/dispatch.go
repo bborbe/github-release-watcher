@@ -12,6 +12,7 @@ import (
 	"github.com/bborbe/errors"
 	"github.com/golang/glog"
 	batchv1 "k8s.io/api/batch/v1"
+	"k8s.io/apimachinery/pkg/util/validation"
 )
 
 // Trigger names what caused a build dispatch. It is carried on the dispatch
@@ -52,6 +53,19 @@ func (r Request) Validate(ctx context.Context) error {
 	}
 	if r.Tag == "" {
 		return errors.Errorf(ctx, "build request missing tag for repo=%s", r.Repo)
+	}
+	// The tag becomes a label VALUE twice over — `app.kubernetes.io/version` in
+	// the rendered Job and the same key in the dedupe selector — so a tag git
+	// accepts but a label value does not (`v1.0.0+build`) would be rejected by
+	// the API server after the whole manifest was built, and one carrying a
+	// comma or `=` would silently break the selector and let a second build
+	// through. Rejecting here fails once, early, and names the reason.
+	if errs := validation.IsValidLabelValue(r.Tag); len(errs) > 0 {
+		return errors.Errorf(
+			ctx,
+			"build request tag %q is not a valid Kubernetes label value repo=%s: %s",
+			r.Tag, r.Repo, strings.Join(errs, "; "),
+		)
 	}
 	return nil
 }
