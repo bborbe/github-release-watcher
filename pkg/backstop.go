@@ -6,6 +6,7 @@ package pkg
 
 import (
 	"context"
+	"slices"
 
 	"github.com/bborbe/errors"
 	"github.com/bborbe/github-release-watcher/pkg/build"
@@ -108,7 +109,7 @@ func (b *tagBackstop) newestUnbuiltTag(
 		// where the backstop actually fired.
 		return "", nil
 	}
-	if lastBuiltTag == "" || !containsTag(tags, lastBuiltTag) {
+	if lastBuiltTag == "" || !slices.Contains(tags, lastBuiltTag) {
 		// No baseline yet, or the cursor names a tag that no longer exists
 		// (deleted or rewound). Dispatching the newest self-heals the cursor,
 		// and the dispatcher is idempotent when the image already exists.
@@ -128,6 +129,14 @@ func (b *tagBackstop) newestUnbuiltTag(
 	// The ordering assumption did not hold for the first entry. Scan the page
 	// for anything genuinely newer; bounded at one page by design.
 	for _, tag := range tags[1:] {
+		// Up to one GetCommitEpoch call per entry: a full page is 100 round
+		// trips, long enough that a cancelled cycle must stop here rather than
+		// keep spending the shared token.
+		select {
+		case <-ctx.Done():
+			return "", errors.Wrapf(ctx, ctx.Err(), "scan tags cancelled")
+		default:
+		}
 		if tag == lastBuiltTag {
 			continue
 		}
@@ -140,13 +149,4 @@ func (b *tagBackstop) newestUnbuiltTag(
 		}
 	}
 	return "", nil
-}
-
-func containsTag(tags []string, want string) bool {
-	for _, tag := range tags {
-		if tag == want {
-			return true
-		}
-	}
-	return false
 }
