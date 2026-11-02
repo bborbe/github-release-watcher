@@ -57,12 +57,23 @@ type GitHubClient interface {
 	// GetLatestReleaseTag returns the tag name of the repo's latest GitHub
 	// release, or "" when the repo has published none.
 	//
-	// This is the poll backstop's input: a missed tag-push webhook is
-	// recovered by asking GitHub what the newest release is, rather than by
-	// listing every tag (one API call instead of a paginated walk). The
-	// backstop's cursor entry keeps the call from re-dispatching a tag it has
-	// already handled.
+	// NOT the poll backstop's input — see ListTags below. It reads the Releases
+	// API, and a repo that tags without publishing a Release object answers 404,
+	// which is indistinguishable from "nothing to recover". It is retained only
+	// because removing it is out of scope for the change that stopped using it;
+	// nothing in this package calls it, so it is a deletion candidate.
 	GetLatestReleaseTag(ctx context.Context, repo Repo) (string, error)
+
+	// ListTags returns the repo's tag names, one page of up to 100, in the
+	// order GitHub returns them — newest first in practice, but NOT guaranteed
+	// by the API. The response carries no commit dates, so a caller that needs
+	// recency must resolve it with GetCommitEpoch.
+	//
+	// This is the poll backstop's input. GetLatestReleaseTag cannot serve that
+	// purpose: a repo that tags without publishing a GitHub Release object
+	// answers 404 on every cycle, which the backstop cannot distinguish from a
+	// healthy "nothing to recover" — a silent dead path rather than a failure.
+	ListTags(ctx context.Context, repo Repo) ([]string, error)
 
 	// GetCommitEpoch returns the committer date, in Unix seconds, of the commit
 	// the given ref resolves to.
@@ -364,6 +375,38 @@ func (c *githubClient) GetLatestReleaseTag(ctx context.Context, repo Repo) (stri
 		)
 	}
 	return release.GetTagName(), nil
+}
+
+// ListTags returns one page of the repo's tag names.
+//
+// One page, not a paginated walk: GitHub returns tags newest-first in practice,
+// so the newest tag is on the first page whatever the repo size. A caller that
+// needs a guarantee rather than the practice confirms with GetCommitEpoch —
+// which is what the backstop does.
+func (c *githubClient) ListTags(ctx context.Context, repo Repo) ([]string, error) {
+	tags, _, err := c.client.Repositories.ListTags(
+		ctx, repo.Owner, repo.Name, &gogithub.ListOptions{PerPage: 100},
+	)
+	if err != nil {
+		var ghErr *gogithub.ErrorResponse
+		if stderrors.As(err, &ghErr) && ghErr.Response.StatusCode == http.StatusNotFound {
+			// Repo gone, renamed past redirect, or outside the installation —
+			// nothing to list. Logged because the backstop cannot otherwise tell
+			// this apart from a healthy repo with no tags, and this PR exists to
+			// remove exactly that kind of silent dead path.
+			glog.V(2).Infof("list tags %s/%s: repo not visible (404)", repo.Owner, repo.Name)
+			return nil, nil
+		}
+		if isRateLimitError(err) {
+			return nil, ErrRateLimited
+		}
+		return nil, errors.Wrapf(ctx, err, "list tags %s/%s", repo.Owner, repo.Name)
+	}
+	names := make([]string, 0, len(tags))
+	for _, tag := range tags {
+		names = append(names, tag.GetName())
+	}
+	return names, nil
 }
 
 // GetCommitEpoch returns the committer date of the commit ref resolves to.

@@ -6,6 +6,7 @@ package pkg
 
 import (
 	"context"
+	"slices"
 
 	"github.com/bborbe/errors"
 	"github.com/bborbe/github-release-watcher/pkg/build"
@@ -22,11 +23,12 @@ import (
 // cost — which is precisely what the design record prices option C as
 // ("Low-med … costs GitHub API quota").
 type TagBackstop interface {
-	// Poll dispatches a build for repo's newest release tag when that tag has
-	// not been dispatched before. lastBuiltTag is the cursor's record of the
-	// last tag this backstop handled. It returns the tag it dispatched, or ""
-	// when there was nothing new to do — the caller persists a non-empty
-	// return so the next cycle stays silent.
+	// Poll dispatches a build for repo's newest tag when that tag has not been
+	// dispatched before. A tag need not carry a GitHub Release — the newest is
+	// chosen by committer epoch, not by the Releases API. lastBuiltTag is the
+	// cursor's record of the last tag this backstop handled. It returns the tag
+	// it dispatched, or "" when there was nothing new to do — the caller
+	// persists a non-empty return so the next cycle stays silent.
 	Poll(ctx context.Context, repoKey, lastBuiltTag string) (string, error)
 }
 
@@ -59,17 +61,11 @@ func (b *tagBackstop) Poll(ctx context.Context, repoKey, lastBuiltTag string) (s
 	if !ok {
 		return "", errors.Errorf(ctx, "malformed repo key %q", repoKey)
 	}
-	tag, err := b.ghClient.GetLatestReleaseTag(ctx, repo)
+	tag, err := b.newestUnbuiltTag(ctx, repo, lastBuiltTag)
 	if err != nil {
-		return "", errors.Wrapf(ctx, err, "resolve latest release tag repo=%s", repoKey)
+		return "", errors.Wrapf(ctx, err, "resolve newest tag repo=%s", repoKey)
 	}
 	if tag == "" {
-		return "", nil
-	}
-	if tag == lastBuiltTag {
-		// Already handled. Silent on purpose: this is the steady state for
-		// every repo on every cycle, and logging it would bury the one cycle
-		// where the backstop actually fired.
 		return "", nil
 	}
 	if err := b.dispatcher.Dispatch(
@@ -83,4 +79,107 @@ func (b *tagBackstop) Poll(ctx context.Context, repoKey, lastBuiltTag string) (s
 		"github-release-watcher backstop handled repo=%s ref=%s", repoKey, build.TagRefPrefix+tag,
 	)
 	return tag, nil
+}
+
+// newestUnbuiltTag returns the tag to dispatch, or "" when nothing is at least
+// as new as lastBuiltTag.
+//
+// The ordering rule is the whole decision here. GitHub returns ListTags
+// newest-first in practice but guarantees nothing, so the first entry is a
+// candidate, not an answer: its committer epoch must match or beat
+// lastBuiltTag's, and when it does not, the rest of the page is scanned. Semver sorting is
+// deliberately NOT used — it drops non-semver tags (this fleet carries
+// "probe-version") and ranks a prerelease below its own release, so a re-cut
+// vX.Y.Z-rc1 would sort under vX.Y.Z and never dispatch.
+func (b *tagBackstop) newestUnbuiltTag(
+	ctx context.Context,
+	repo Repo,
+	lastBuiltTag string,
+) (string, error) {
+	tags, err := b.ghClient.ListTags(ctx, repo)
+	if err != nil {
+		return "", err
+	}
+	if len(tags) == 0 {
+		return "", nil
+	}
+	candidate := tags[0]
+	if candidate == lastBuiltTag {
+		// Already handled. Silent on purpose: this is the steady state for
+		// every repo on every cycle, and logging it would bury the one cycle
+		// where the backstop actually fired.
+		//
+		// This shortcut ASSUMES the first entry is the newest, which is the one
+		// assumption the scan below exists to defend against — and it is the
+		// price of the one-call steady state. Verifying it would mean an epoch
+		// call per entry on every cycle forever. The assumption is sound in
+		// practice (GitHub returns tags newest-first) and the failure it would
+		// hide — a newer tag sitting deeper while the cursor happens to be
+		// first — needs the API to reorder, which no observed response has done.
+		return "", nil
+	}
+	// -1 means "no baseline": either a cold cursor, or one naming a tag that is
+	// no longer on the page (deleted, rewound, or pushed past entry 100). Every
+	// real epoch is >= 0, so the scan below then simply takes the newest entry —
+	// which is what self-heals the cursor. Resolving a baseline here instead of
+	// trusting tags[0] is a one-time cost on a path that runs once, not the
+	// per-cycle cost the index-0 shortcut exists to avoid.
+	lastEpoch := int64(-1)
+	if lastBuiltTag != "" && slices.Contains(tags, lastBuiltTag) {
+		epoch, err := b.ghClient.GetCommitEpoch(ctx, repo, lastBuiltTag)
+		if err != nil {
+			return "", errors.Wrapf(ctx, err, "epoch last built tag=%s", lastBuiltTag)
+		}
+		lastEpoch = epoch
+	}
+	// Pick the MAXIMUM epoch on the page, not merely the first entry that beats
+	// the cursor. Trusting the first entry here would reintroduce the very
+	// assumption this function exists to defend against: on a partially
+	// reordered page the first at-least-as-new tag would be dispatched, the
+	// cursor would advance to it, and the genuinely newest tag deeper in the
+	// page would then be masked by the index-0 shortcut on every later cycle.
+	//
+	// >= rather than >: a NEW tag name on an already-built commit still needs a
+	// build. The image is keyed by tag name, so a re-tag of the same commit
+	// (v1.2.4 on v1.2.3's commit) has no image yet, and a strict > would drop
+	// it silently — the same class of missed tag this backstop exists to
+	// recover. Dispatching it also advances the cursor, so the tie does not
+	// become a repeated-scan steady state.
+	//
+	// Cost: bounded at one page (100 entries), one GetCommitEpoch per entry. The
+	// index-0 shortcut above keeps it off the common path, but it is NOT
+	// strictly a dispatch-only path: a tag whose commit predates the cursor (a
+	// probe tag cut on an old commit) leaves `best` empty and re-runs the scan
+	// every cycle until it leaves the page. That case logs below so the cost is
+	// visible rather than silent.
+	best := ""
+	var bestEpoch int64
+	for _, tag := range tags {
+		select {
+		case <-ctx.Done():
+			return "", errors.Wrapf(ctx, ctx.Err(), "scan tags cancelled")
+		default:
+		}
+		if tag == lastBuiltTag {
+			continue
+		}
+		epoch, err := b.ghClient.GetCommitEpoch(ctx, repo, tag)
+		if err != nil {
+			return "", errors.Wrapf(ctx, err, "epoch candidate tag=%s", tag)
+		}
+		if epoch >= lastEpoch && (best == "" || epoch > bestEpoch) {
+			best, bestEpoch = tag, epoch
+		}
+	}
+	if best == "" {
+		// Nothing on the page is at-or-newer than the cursor. Reached when a tag
+		// exists whose commit predates the cursor (a probe tag cut on an old
+		// commit), and it re-runs every cycle until that tag leaves the page —
+		// logged so the cost is visible rather than silent.
+		glog.V(2).Infof(
+			"github-release-watcher backstop scanned %d tags repo=%s and found none newer than %s",
+			len(tags), repo.Key(), lastBuiltTag,
+		)
+	}
+	return best, nil
 }
