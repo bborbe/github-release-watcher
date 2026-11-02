@@ -38,6 +38,7 @@ var _ = Describe("Dispatcher", func() {
 		configs    *mocks.BuildConfigProvider
 		manifests  *mocks.BuildManifestLoader
 		images     *mocks.BuildImageChecker
+		creds      *mocks.BuildCredentialReader
 		jobs       *mocks.BuildJobCreator
 		epochs     *mocks.BuildCommitEpochProvider
 		active     *mocks.BuildJobLister
@@ -51,18 +52,20 @@ var _ = Describe("Dispatcher", func() {
 		configs = new(mocks.BuildConfigProvider)
 		manifests = new(mocks.BuildManifestLoader)
 		images = new(mocks.BuildImageChecker)
+		creds = new(mocks.BuildCredentialReader)
 		jobs = new(mocks.BuildJobCreator)
 		epochs = new(mocks.BuildCommitEpochProvider)
 		active = new(mocks.BuildJobLister)
 		metrics = new(mocks.BuildMetrics)
 		dispatcher = build.NewDispatcher(build.Deps{
-			Manifests:  manifests,
-			Jobs:       jobs,
-			Images:     images,
-			Configs:    configs,
-			Epochs:     epochs,
-			ActiveJobs: active,
-			Metrics:    metrics,
+			Manifests:   manifests,
+			Jobs:        jobs,
+			Images:      images,
+			Credentials: creds,
+			Configs:     configs,
+			Epochs:      epochs,
+			ActiveJobs:  active,
+			Metrics:     metrics,
 		})
 		req = build.Request{Repo: "bborbe/example", Tag: "v1.2.3"}
 
@@ -74,6 +77,7 @@ var _ = Describe("Dispatcher", func() {
 		}, nil)
 		manifests.LoadBuildJobManifestReturns([]byte(buildJobManifest), nil)
 		images.ExistsReturns(false, nil)
+		creds.CredentialsReturns(build.Credentials{}, nil)
 		epochs.CommitEpochReturns(1767225600, nil)
 		active.ActiveByTagReturns(nil, nil)
 		jobs.CreateReturns(nil)
@@ -148,7 +152,7 @@ var _ = Describe("Dispatcher", func() {
 		_, job := jobs.CreateArgsForCall(0)
 		Expect(build.JobImage(job)).To(
 			Equal("docker.prod.nuke.benjamin-borbe.de:443/bborbe/example:v1.2.3"))
-		_, probed := images.ExistsArgsForCall(0)
+		_, probed, _ := images.ExistsArgsForCall(0)
 		Expect(probed).To(
 			Equal("docker.prod.nuke.benjamin-borbe.de:443/bborbe/example:v1.2.3"))
 	})
@@ -185,6 +189,71 @@ var _ = Describe("Dispatcher", func() {
 			"an unreachable registry must never create a job")
 		Expect(metrics.IncFilterSkippedCallCount()).To(Equal(1))
 		Expect(metrics.IncFilterSkippedArgsForCall(0)).To(Equal("registry_unreachable"))
+	})
+
+	It("probes the registry as the principal the build pushes as", func() {
+		// An anonymous probe is a different request than the build makes: on a
+		// shared cluster egress it fails for reasons unrelated to whether the
+		// image is there, and the fail-closed rule turns that into a skip.
+		creds.CredentialsReturns(
+			build.Credentials{Username: "robot", Password: "s3cret"}, nil,
+		)
+
+		Expect(dispatcher.Dispatch(ctx, req, build.TriggerWebhook)).To(Succeed())
+
+		_, probed, got := images.ExistsArgsForCall(0)
+		Expect(probed).To(Equal("docker.io/bborbe/example:v1.2.3"))
+		Expect(got.Username).To(Equal("robot"))
+		Expect(got.Password).To(Equal("s3cret"))
+		_, namespace, secretName, _ := creds.CredentialsArgsForCall(0)
+		Expect(namespace).To(Equal("build"))
+		Expect(secretName).To(Equal("registry-secret"))
+	})
+
+	It("probes anonymously when no credential reader is wired", func() {
+		// The backward-compatible path: a deployment without a reader must keep
+		// behaving exactly as it did before credentials existed.
+		dispatcher = build.NewDispatcher(build.Deps{
+			Manifests:  manifests,
+			Jobs:       jobs,
+			Images:     images,
+			Configs:    configs,
+			Epochs:     epochs,
+			ActiveJobs: active,
+			Metrics:    metrics,
+		})
+
+		Expect(dispatcher.Dispatch(ctx, req, build.TriggerWebhook)).To(Succeed())
+
+		_, _, got := images.ExistsArgsForCall(0)
+		Expect(got.IsZero()).To(BeTrue())
+		Expect(creds.CredentialsCallCount()).To(Equal(0))
+	})
+
+	It("probes anonymously when the repo configures no push secret", func() {
+		configs.ConfigReturns(build.Config{
+			AutoBuild:       true,
+			Destinations:    []string{"dockerhub"},
+			PushSecret:      "",
+			DeadlineSeconds: 900,
+		}, nil)
+
+		Expect(dispatcher.Dispatch(ctx, req, build.TriggerWebhook)).To(Succeed())
+
+		_, _, got := images.ExistsArgsForCall(0)
+		Expect(got.IsZero()).To(BeTrue())
+		Expect(creds.CredentialsCallCount()).To(Equal(0))
+	})
+
+	It("fails rather than probing anonymously when the credential lookup errors", func() {
+		// Falling back to anonymous here would answer a different question than
+		// the one that decides whether to build.
+		creds.CredentialsReturns(build.Credentials{}, errors.Errorf(ctx, "forbidden"))
+
+		err := dispatcher.Dispatch(ctx, req, build.TriggerWebhook)
+		Expect(err).To(HaveOccurred())
+		Expect(images.ExistsCallCount()).To(Equal(0))
+		Expect(jobs.CreateCallCount()).To(Equal(0))
 	})
 
 	It("skips when the image is already published", func() {

@@ -162,13 +162,14 @@ func CreateBuildDispatcher(
 	metrics pkg.Metrics,
 ) build.Dispatcher {
 	return build.NewDispatcher(build.Deps{
-		Manifests:  pkg.NewBuildManifestLoader(ghClient),
-		Jobs:       pkg.NewBuildJobCreator(jobDeployer),
-		Images:     build.NewRegistryImageChecker(httpClient),
-		Configs:    build.NewConfigProvider(pkg.NewBuildFileFetcher(ghClient)),
-		Epochs:     pkg.NewBuildCommitEpochProvider(ghClient),
-		ActiveJobs: pkg.NewBuildJobLister(clientset),
-		Metrics:    metrics,
+		Manifests:   pkg.NewBuildManifestLoader(ghClient),
+		Jobs:        pkg.NewBuildJobCreator(jobDeployer),
+		Images:      build.NewRegistryImageChecker(httpClient),
+		Credentials: pkg.NewBuildCredentialReader(clientset),
+		Configs:     build.NewConfigProvider(pkg.NewBuildFileFetcher(ghClient)),
+		Epochs:      pkg.NewBuildCommitEpochProvider(ghClient),
+		ActiveJobs:  pkg.NewBuildJobLister(clientset),
+		Metrics:     metrics,
 	})
 }
 
