@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+- chore: update github.com/bborbe/agent to v0.136.0, github.com/bborbe/cqrs to v0.6.15, github.com/bborbe/errors to v1.6.6, github.com/bborbe/http to v1.26.32, github.com/bborbe/k8s to v1.14.31, github.com/bborbe/kafka to v1.29.11, github.com/bborbe/kv to v1.21.28, github.com/bborbe/log to v1.7.6, github.com/bborbe/maintainer to v0.51.0, github.com/bborbe/parse to v1.12.5, github.com/bborbe/run to v1.11.10, github.com/bborbe/sentry to v1.10.7, github.com/bborbe/service to v1.11.2, github.com/bborbe/time to v1.27.25, k8s.io/api to v0.38.0-alpha.3
+
 ## v0.8.0
 
 - feat: recover a missed tag-push webhook from the existing poll cycle. `Poll` now runs a `TagBackstop` per scanned repo: it asks GitHub for the repo's newest release tag (`GET /releases/latest`, one call rather than a paginated tag walk) and dispatches a build for it with `trigger=poll`, so the dispatch line names which entry point fired. It runs inside `POLL_INTERVAL` rather than on a second ticker so it inherits the `QUOTA_MIN_REMAINING` gate instead of doubling the scan's API cost. The cursor's `RepoState` gains `last_built_tag`; a tag already handled is skipped silently, which keeps the backstop from re-dispatching every repo every 10 minutes and inflating `filter_skipped_total{reason="image_exists"}` by a meaningless count. A backstop failure is logged and does not abort the release scan
