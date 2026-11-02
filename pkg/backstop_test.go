@@ -87,14 +87,18 @@ var _ = Describe("TagBackstop", func() {
 	})
 
 	It("stays silent when no tag's commit is newer than the last built one", func() {
-		// Same commit under two tags: nothing new to build.
-		ghClient.ListTagsReturns([]string{"v1.2.3", "v1.2.3-hotfix"}, nil)
-		epochs(map[string]int64{"v1.2.3": 100, "v1.2.3-hotfix": 100})
+		// Two DIFFERENT tags on the same commit: the tie must be decided by the
+		// epoch comparison, not by the index-0 shortcut. tags[0] is deliberately
+		// not the cursor, so the short-circuit cannot hide the comparison.
+		ghClient.ListTagsReturns([]string{"v1.2.4", "v1.2.3"}, nil)
+		epochs(map[string]int64{"v1.2.4": 100, "v1.2.3": 100})
 
 		tag, err := backstop.Poll(ctx, "bborbe/example", "v1.2.3")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(tag).To(BeEmpty())
 		Expect(dispatcher.DispatchCallCount()).To(Equal(0))
+		Expect(ghClient.GetCommitEpochCallCount()).To(BeNumerically(">", 0),
+			"the tie must be reached by comparing epochs, not by an early return")
 	})
 
 	It("dispatches the newest tag when the cursor names a tag that no longer exists", func() {

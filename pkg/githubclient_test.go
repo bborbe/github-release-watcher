@@ -230,6 +230,81 @@ var _ = Describe("pkg.GitHubClient", func() {
 		})
 	})
 
+	Describe("ListTags", func() {
+		Context("happy path", func() {
+			It("returns the tag names in API order and asks for one page of 100", func() {
+				var gotPerPage string
+				server := httptest.NewServer(
+					http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+						Expect(r.URL.Path).To(Equal("/repos/bborbe/docker-utils/tags"))
+						gotPerPage = r.URL.Query().Get("per_page")
+						w.Header().Set("Content-Type", "application/json")
+						fmt.Fprint(
+							w,
+							`[{"name":"v1.3.0"},{"name":"v1.2.3"},{"name":"probe-version"}]`,
+						)
+					}),
+				)
+				defer server.Close()
+
+				client := pkg.NewGitHubClient(server.Client())
+				err := pkg.SetBaseURL(client, server.URL+"/")
+				Expect(err).NotTo(HaveOccurred())
+
+				tags, err := client.ListTags(ctx, pkg.Repo{Owner: "bborbe", Name: "docker-utils"})
+				Expect(err).NotTo(HaveOccurred())
+				Expect(tags).To(Equal([]string{"v1.3.0", "v1.2.3", "probe-version"}))
+				Expect(gotPerPage).To(Equal("100"))
+			})
+		})
+
+		Context("repo not found (404)", func() {
+			It("returns (nil, nil)", func() {
+				server := httptest.NewServer(
+					http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+						w.Header().Set("Content-Type", "application/json")
+						w.WriteHeader(http.StatusNotFound)
+						fmt.Fprintf(w, `{"message":"Not Found"}`)
+					}),
+				)
+				defer server.Close()
+
+				client := pkg.NewGitHubClient(server.Client())
+				err := pkg.SetBaseURL(client, server.URL+"/")
+				Expect(err).NotTo(HaveOccurred())
+
+				tags, err := client.ListTags(ctx, pkg.Repo{Owner: "bborbe", Name: "gone"})
+				Expect(err).NotTo(HaveOccurred())
+				Expect(tags).To(BeNil())
+			})
+		})
+
+		Context("rate limited", func() {
+			It("returns ErrRateLimited on 403 + X-RateLimit-Remaining: 0", func() {
+				server := httptest.NewServer(
+					http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+						w.Header().Set("Content-Type", "application/json")
+						w.Header().Set("X-RateLimit-Remaining", "0")
+						w.Header().Set("X-RateLimit-Reset", "9999999999")
+						w.WriteHeader(http.StatusForbidden)
+						fmt.Fprintf(
+							w,
+							`{"message":"API rate limit exceeded","documentation_url":"https://docs.github.com/rest/overview/rate-limiting-for-the-rest-api"}`,
+						)
+					}),
+				)
+				defer server.Close()
+
+				client := pkg.NewGitHubClient(server.Client())
+				err := pkg.SetBaseURL(client, server.URL+"/")
+				Expect(err).NotTo(HaveOccurred())
+
+				_, err = client.ListTags(ctx, pkg.Repo{Owner: "bborbe", Name: "docker-utils"})
+				Expect(err).To(MatchError(pkg.ErrRateLimited))
+			})
+		})
+	})
+
 	Describe("GetChangelogContent", func() {
 		Context("file not found (404)", func() {
 			It("returns (nil, nil)", func() {

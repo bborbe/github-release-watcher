@@ -23,11 +23,12 @@ import (
 // cost — which is precisely what the design record prices option C as
 // ("Low-med … costs GitHub API quota").
 type TagBackstop interface {
-	// Poll dispatches a build for repo's newest release tag when that tag has
-	// not been dispatched before. lastBuiltTag is the cursor's record of the
-	// last tag this backstop handled. It returns the tag it dispatched, or ""
-	// when there was nothing new to do — the caller persists a non-empty
-	// return so the next cycle stays silent.
+	// Poll dispatches a build for repo's newest tag when that tag has not been
+	// dispatched before. A tag need not carry a GitHub Release — the newest is
+	// chosen by committer epoch, not by the Releases API. lastBuiltTag is the
+	// cursor's record of the last tag this backstop handled. It returns the tag
+	// it dispatched, or "" when there was nothing new to do — the caller
+	// persists a non-empty return so the next cycle stays silent.
 	Poll(ctx context.Context, repoKey, lastBuiltTag string) (string, error)
 }
 
@@ -107,6 +108,14 @@ func (b *tagBackstop) newestUnbuiltTag(
 		// Already handled. Silent on purpose: this is the steady state for
 		// every repo on every cycle, and logging it would bury the one cycle
 		// where the backstop actually fired.
+		//
+		// This shortcut ASSUMES the first entry is the newest, which is the one
+		// assumption the scan below exists to defend against — and it is the
+		// price of the one-call steady state. Verifying it would mean an epoch
+		// call per entry on every cycle forever. The assumption is sound in
+		// practice (GitHub returns tags newest-first) and the failure it would
+		// hide — a newer tag sitting deeper while the cursor happens to be
+		// first — needs the API to reorder, which no observed response has done.
 		return "", nil
 	}
 	if lastBuiltTag == "" || !slices.Contains(tags, lastBuiltTag) {

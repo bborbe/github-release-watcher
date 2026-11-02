@@ -57,11 +57,11 @@ type GitHubClient interface {
 	// GetLatestReleaseTag returns the tag name of the repo's latest GitHub
 	// release, or "" when the repo has published none.
 	//
-	// This is the poll backstop's input: a missed tag-push webhook is
-	// recovered by asking GitHub what the newest release is, rather than by
-	// listing every tag (one API call instead of a paginated walk). The
-	// backstop's cursor entry keeps the call from re-dispatching a tag it has
-	// already handled.
+	// NOT the poll backstop's input — see ListTags below. It reads the Releases
+	// API, and a repo that tags without publishing a Release object answers 404,
+	// which is indistinguishable from "nothing to recover". It is retained only
+	// because removing it is out of scope for the change that stopped using it;
+	// nothing in this package calls it, so it is a deletion candidate.
 	GetLatestReleaseTag(ctx context.Context, repo Repo) (string, error)
 
 	// ListTags returns the repo's tag names, one page of up to 100, in the
