@@ -968,8 +968,11 @@ var _ = Describe("pkg.Watcher.Poll tag backstop", func() {
 		Expect(w.Poll(ctx, false, "")).To(Succeed())
 
 		Expect(backstop.PollCallCount()).To(Equal(1))
-		_, repoKey, lastBuilt := backstop.PollArgsForCall(0)
-		Expect(repoKey).To(Equal("github.com/bborbe/docker-utils"))
+		_, polledRepo, lastBuilt := backstop.PollArgsForCall(0)
+		// The Repo struct, not its key: re-splitting "github.com/owner/name"
+		// downstream produced Owner="github.com" and a 404 on every call.
+		Expect(polledRepo.Owner).To(Equal("bborbe"))
+		Expect(polledRepo.Name).To(Equal("docker-utils"))
 		Expect(lastBuilt).To(BeEmpty(), "the first cycle has nothing recorded yet")
 
 		cursor, err := pkg.LoadCursor(ctx, cursorPath)

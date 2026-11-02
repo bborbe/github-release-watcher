@@ -12,11 +12,11 @@ import (
 )
 
 type TagBackstop struct {
-	PollStub        func(context.Context, string, string) (string, error)
+	PollStub        func(context.Context, pkg.Repo, string) (string, error)
 	pollMutex       sync.RWMutex
 	pollArgsForCall []struct {
 		arg1 context.Context
-		arg2 string
+		arg2 pkg.Repo
 		arg3 string
 	}
 	pollReturns struct {
@@ -31,12 +31,12 @@ type TagBackstop struct {
 	invocationsMutex sync.RWMutex
 }
 
-func (fake *TagBackstop) Poll(arg1 context.Context, arg2 string, arg3 string) (string, error) {
+func (fake *TagBackstop) Poll(arg1 context.Context, arg2 pkg.Repo, arg3 string) (string, error) {
 	fake.pollMutex.Lock()
 	ret, specificReturn := fake.pollReturnsOnCall[len(fake.pollArgsForCall)]
 	fake.pollArgsForCall = append(fake.pollArgsForCall, struct {
 		arg1 context.Context
-		arg2 string
+		arg2 pkg.Repo
 		arg3 string
 	}{arg1, arg2, arg3})
 	stub := fake.PollStub
@@ -58,13 +58,13 @@ func (fake *TagBackstop) PollCallCount() int {
 	return len(fake.pollArgsForCall)
 }
 
-func (fake *TagBackstop) PollCalls(stub func(context.Context, string, string) (string, error)) {
+func (fake *TagBackstop) PollCalls(stub func(context.Context, pkg.Repo, string) (string, error)) {
 	fake.pollMutex.Lock()
 	defer fake.pollMutex.Unlock()
 	fake.PollStub = stub
 }
 
-func (fake *TagBackstop) PollArgsForCall(i int) (context.Context, string, string) {
+func (fake *TagBackstop) PollArgsForCall(i int) (context.Context, pkg.Repo, string) {
 	fake.pollMutex.RLock()
 	defer fake.pollMutex.RUnlock()
 	argsForCall := fake.pollArgsForCall[i]
