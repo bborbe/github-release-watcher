@@ -86,6 +86,33 @@ var _ = Describe("TagBackstop", func() {
 			"the first entry is a candidate, not an answer")
 	})
 
+	It("dispatches the tag with the greatest epoch, not the first one past the cursor", func() {
+		// Two entries both beat the cursor. Dispatching the first would advance
+		// the cursor to v1.2.4 and then let the index-0 shortcut mask v1.3.0 on
+		// every later cycle, so the newest build would never fire.
+		ghClient.ListTagsReturns([]string{"v1.2.4", "v1.3.0", "v1.2.3"}, nil)
+		epochs(map[string]int64{"v1.2.4": 100, "v1.3.0": 200, "v1.2.3": 100})
+
+		tag, err := backstop.Poll(ctx, "bborbe/example", "v1.2.3")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(tag).To(Equal("v1.3.0"))
+	})
+
+	It("stays silent when the cursor is the first entry and a newer tag sits deeper", func() {
+		// Pins the accepted trade-off documented on the index-0 shortcut: the
+		// one-call steady state trusts API ordering, so a reordered page with the
+		// cursor first is not scanned. Asserted so the limit is deliberate and
+		// visible rather than discovered later.
+		ghClient.ListTagsReturns([]string{"v1.2.3", "v1.3.0"}, nil)
+		epochs(map[string]int64{"v1.2.3": 100, "v1.3.0": 200})
+
+		tag, err := backstop.Poll(ctx, "bborbe/example", "v1.2.3")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(tag).To(BeEmpty())
+		Expect(ghClient.GetCommitEpochCallCount()).To(Equal(0),
+			"the steady-state shortcut must not pay for an epoch call")
+	})
+
 	It("dispatches a new tag name on an already-built commit", func() {
 		// The image is keyed by tag name, so v1.2.4 on v1.2.3's commit has no
 		// image yet and must build. tags[0] is deliberately not the cursor, so

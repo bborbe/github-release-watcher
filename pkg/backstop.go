@@ -128,25 +128,28 @@ func (b *tagBackstop) newestUnbuiltTag(
 	if err != nil {
 		return "", errors.Wrapf(ctx, err, "epoch last built tag=%s", lastBuiltTag)
 	}
-	candidateEpoch, err := b.ghClient.GetCommitEpoch(ctx, repo, candidate)
-	if err != nil {
-		return "", errors.Wrapf(ctx, err, "epoch candidate tag=%s", candidate)
-	}
+	// Pick the MAXIMUM epoch on the page, not merely the first entry that beats
+	// the cursor. Trusting the first entry here would reintroduce the very
+	// assumption this function exists to defend against: on a partially
+	// reordered page the first at-least-as-new tag would be dispatched, the
+	// cursor would advance to it, and the genuinely newest tag deeper in the
+	// page would then be masked by the index-0 shortcut on every later cycle.
+	//
 	// >= rather than >: a NEW tag name on an already-built commit still needs a
 	// build. The image is keyed by tag name, so a re-tag of the same commit
 	// (v1.2.4 on v1.2.3's commit) has no image yet, and a strict > would drop
 	// it silently — the same class of missed tag this backstop exists to
 	// recover. Dispatching it also advances the cursor, so the tie does not
 	// become a repeated-scan steady state.
-	if candidateEpoch >= lastEpoch {
-		return candidate, nil
-	}
-	// The ordering assumption did not hold for the first entry. Scan the page
-	// for anything at least as new; bounded at one page by design.
-	for _, tag := range tags[1:] {
-		// Up to one GetCommitEpoch call per entry: a full page is 100 round
-		// trips, long enough that a cancelled cycle must stop here rather than
-		// keep spending the shared token.
+	//
+	// Cost: this loop runs only when a tag other than the cursor is on the page,
+	// i.e. on the dispatch path, never in the steady state. It is bounded at one
+	// page (100 entries) and each iteration is one GetCommitEpoch round trip, so
+	// the context check below is what stops a cancelled cycle from spending the
+	// shared token on the rest of the page.
+	best := ""
+	var bestEpoch int64
+	for _, tag := range tags {
 		select {
 		case <-ctx.Done():
 			return "", errors.Wrapf(ctx, ctx.Err(), "scan tags cancelled")
@@ -159,9 +162,19 @@ func (b *tagBackstop) newestUnbuiltTag(
 		if err != nil {
 			return "", errors.Wrapf(ctx, err, "epoch candidate tag=%s", tag)
 		}
-		if epoch >= lastEpoch {
-			return tag, nil
+		if epoch >= lastEpoch && (best == "" || epoch > bestEpoch) {
+			best, bestEpoch = tag, epoch
 		}
 	}
-	return "", nil
+	if best == "" {
+		// Nothing on the page is at-or-newer than the cursor. Reached when a tag
+		// exists whose commit predates the cursor (a probe tag cut on an old
+		// commit), and it re-runs every cycle until that tag leaves the page —
+		// logged so the cost is visible rather than silent.
+		glog.V(2).Infof(
+			"github-release-watcher backstop scanned %d tags repo=%s and found none newer than %s",
+			len(tags), repo.Key(), lastBuiltTag,
+		)
+	}
+	return best, nil
 }
