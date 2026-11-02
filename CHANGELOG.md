@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## v0.11.0
 
 - fix: give the registry pre-flight its own plain HTTP client instead of the GitHub App one. The GitHub App client's RoundTripper sets `Authorization: token <installation-token>` on every request it forwards (`ghinstallation` v2 `transport.go`), so the probe's own `SetBasicAuth` was overwritten and the in-house registry answered 401 to a request carrying a GitHub token — reported as `reason=registry_unreachable` for an image that was perfectly reachable. Measured on nuke dev 2026-11-02: the same credential returned 200 for an existing manifest and 404 for a missing one from a workstation, while the watcher got 401 for both, and the Docker Hub arm's earlier `token request returned 500` has the same cause. `CreateBuildDispatcher` no longer accepts an `*http.Client`; the checker builds its own, so the auth client cannot be threaded back in
 
