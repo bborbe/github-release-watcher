@@ -6,6 +6,7 @@ package build_test
 
 import (
 	"context"
+	stderrors "errors"
 
 	"github.com/bborbe/errors"
 	"github.com/bborbe/github-release-watcher/mocks"
@@ -65,9 +66,9 @@ var _ = Describe("Dispatcher", func() {
 		})
 		req = build.Request{Repo: "bborbe/example", Tag: "v1.2.3"}
 
-		configs.ConfigReturns(build.BuildConfig{
+		configs.ConfigReturns(build.Config{
 			AutoBuild:       true,
-			Destinations:    []string{"docker.io/bborbe/example"},
+			Destinations:    []string{"dockerhub"},
 			PushSecret:      "registry-secret",
 			DeadlineSeconds: 900,
 		}, nil)
@@ -108,13 +109,48 @@ var _ = Describe("Dispatcher", func() {
 	})
 
 	It("skips a repo that did not opt into auto-build", func() {
-		configs.ConfigReturns(build.BuildConfig{AutoBuild: false}, nil)
+		configs.ConfigReturns(build.Config{AutoBuild: false}, nil)
 
 		Expect(dispatcher.Dispatch(ctx, req, build.TriggerWebhook)).To(Succeed())
 
 		Expect(jobs.CreateCallCount()).To(Equal(0))
 		Expect(manifests.LoadBuildJobManifestCallCount()).To(Equal(0))
 		Expect(metrics.IncBuildDispatchedArgsForCall(0)).To(Equal("skipped"))
+	})
+
+	It("skips a repo whose destination class this build arm cannot resolve", func() {
+		configs.ConfigReturns(build.Config{
+			AutoBuild:    true,
+			Destinations: []string{"dockerhub-typo"},
+		}, nil)
+
+		Expect(dispatcher.Dispatch(ctx, req, build.TriggerWebhook)).To(Succeed())
+
+		Expect(jobs.CreateCallCount()).To(Equal(0),
+			"a class that resolves to no registry must never reach a Job")
+		Expect(manifests.LoadBuildJobManifestCallCount()).To(Equal(0))
+		Expect(metrics.IncBuildDispatchedArgsForCall(0)).To(Equal("skipped"))
+	})
+
+	It("builds to the in-house registry for the internal class", func() {
+		// The internal host carries a port, which is the case a naive
+		// colon-means-tag check gets wrong.
+		configs.ConfigReturns(build.Config{
+			AutoBuild:       true,
+			Destinations:    []string{"internal"},
+			PushSecret:      "registry-secret",
+			DeadlineSeconds: 900,
+		}, nil)
+
+		Expect(dispatcher.Dispatch(ctx, req, build.TriggerWebhook)).To(Succeed())
+
+		Expect(jobs.CreateCallCount()).To(Equal(1))
+		_, job := jobs.CreateArgsForCall(0)
+		Expect(build.JobImage(job)).To(
+			Equal("docker.prod.nuke.benjamin-borbe.de:443/bborbe/example:v1.2.3"))
+		_, probed := images.ExistsArgsForCall(0)
+		Expect(probed).To(
+			Equal("docker.prod.nuke.benjamin-borbe.de:443/bborbe/example:v1.2.3"))
 	})
 
 	It("skips a repo with no build recipe", func() {
@@ -229,5 +265,54 @@ var _ = Describe("Dispatcher", func() {
 var _ = Describe("Request", func() {
 	It("renders the full git ref", func() {
 		Expect(build.Request{Tag: "v1.2.3"}.Ref()).To(Equal("refs/tags/v1.2.3"))
+	})
+})
+
+var _ = Describe("ImageRepository", func() {
+	var ctx context.Context
+
+	BeforeEach(func() { ctx = context.Background() })
+
+	DescribeTable("resolves each named destination class",
+		func(dest build.Destination, expected string) {
+			repo, err := build.ImageRepository(ctx, dest, "bborbe/example")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(repo).To(Equal(expected))
+		},
+		// The shared schema defines destinations as NAMED CLASSES, never
+		// registry URLs, so each one has to resolve to a host here.
+		Entry("dockerhub", build.DestinationDockerHub, "docker.io/bborbe/example"),
+		Entry("ghcr", build.DestinationGHCR, "ghcr.io/bborbe/example"),
+		Entry("internal", build.DestinationInternal,
+			"docker.prod.nuke.benjamin-borbe.de:443/bborbe/example"),
+	)
+
+	It("rejects an unknown class rather than building to a nonsense path", func() {
+		// A typo must fail loudly: treating it as "not opted in" would silently
+		// stop building a repo that believes it opted in.
+		_, err := build.ImageRepository(ctx, build.Destination("dockerhub-typo"), "bborbe/example")
+		Expect(err).To(HaveOccurred())
+		Expect(stderrors.Is(err, build.ErrUnknownDestination)).To(BeTrue())
+	})
+})
+
+var _ = Describe("ImageReference", func() {
+	It("appends the tag to a registry without a port", func() {
+		Expect(build.ImageReference("docker.io/bborbe/example", "v1.2.3")).
+			To(Equal("docker.io/bborbe/example:v1.2.3"))
+	})
+
+	It("appends the tag when the registry host carries a port", func() {
+		// The in-house registry is host:port, so a colon anywhere in the
+		// reference is part of the host. Reading it as a tag would probe the
+		// repository instead of the image and build a tagless reference.
+		Expect(build.ImageReference(
+			"docker.prod.nuke.benjamin-borbe.de:443/bborbe/example", "v1.2.3",
+		)).To(Equal("docker.prod.nuke.benjamin-borbe.de:443/bborbe/example:v1.2.3"))
+	})
+
+	It("leaves an already-tagged reference alone", func() {
+		Expect(build.ImageReference("docker.io/bborbe/example:latest", "v1.2.3")).
+			To(Equal("docker.io/bborbe/example:latest"))
 	})
 })

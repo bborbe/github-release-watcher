@@ -186,10 +186,20 @@ func (d *dispatcher) prepare(
 			errors.Wrapf(ctx, err, "resolve build config repo=%s", req.Repo)
 	}
 	if !cfg.AutoBuild {
-		return d.skip(ctx, req, trigger, "no_auto_build")
+		return d.skip(req, trigger, "no_auto_build")
 	}
 	if err := cfg.Validate(ctx); err != nil {
-		return d.skip(ctx, req, trigger, "no_build_config")
+		return d.skip(req, trigger, "no_build_config")
+	}
+
+	// The destination is a named class, so it resolves to a registry host
+	// before anything renders: the same resolved repository feeds both the
+	// Job's image reference and the pre-flight probe, and a mismatch between
+	// the two would either build an image nobody pulls or probe a registry that
+	// never has it.
+	imageRepo, err := cfg.ImageRepositoryFor(ctx, req.Repo)
+	if err != nil {
+		return d.skip(req, trigger, "unknown_destination")
 	}
 
 	raw, err := d.deps.Manifests.LoadBuildJobManifest(ctx, req.Repo, req.Tag)
@@ -198,18 +208,18 @@ func (d *dispatcher) prepare(
 			errors.Wrapf(ctx, err, "load build job manifest repo=%s tag=%s", req.Repo, req.Tag)
 	}
 	if len(raw) == 0 {
-		return d.skip(ctx, req, trigger, "no_build_manifest")
+		return d.skip(req, trigger, "no_build_manifest")
 	}
 
-	job, err := d.render(ctx, raw, req, cfg)
+	job, err := d.render(ctx, raw, req, cfg, imageRepo)
 	if err != nil {
 		if stderrors.Is(err, ErrUnrenderedToken) {
-			return d.skip(ctx, req, trigger, "unrendered_token")
+			return d.skip(req, trigger, "unrendered_token")
 		}
 		return batchv1.Job{}, "", false, err
 	}
 
-	imageRef := ImageReference(cfg.Destinations[0], req.Tag)
+	imageRef := ImageReference(imageRepo, req.Tag)
 	exists, err := d.deps.Images.Exists(ctx, imageRef)
 	if err != nil {
 		// Fail closed: an unreachable registry must never be read as "the
@@ -244,7 +254,8 @@ func (d *dispatcher) render(
 	ctx context.Context,
 	raw []byte,
 	req Request,
-	cfg BuildConfig,
+	cfg Config,
+	imageRepo string,
 ) (batchv1.Job, error) {
 	epoch, err := d.deps.Epochs.CommitEpoch(ctx, req.Repo, req.Ref())
 	if err != nil {
@@ -258,7 +269,7 @@ func (d *dispatcher) render(
 		Ref:             req.Ref(),
 		Tag:             req.Tag,
 		Dockerfile:      cfg.Dockerfile,
-		Image:           cfg.Destinations[0],
+		Image:           imageRepo,
 		Push:            true,
 		PushSecret:      cfg.PushSecret,
 		DeadlineSeconds: cfg.DeadlineSeconds,
@@ -310,7 +321,6 @@ func (d *dispatcher) admit(
 
 // skip records a legitimate "build nothing" outcome.
 func (d *dispatcher) skip(
-	ctx context.Context,
 	req Request,
 	trigger Trigger,
 	reason string,
@@ -350,9 +360,15 @@ func (d *dispatcher) create(
 	return nil
 }
 
-// ImageRef joins an image repository and a tag.
+// ImageReference joins an image repository and a tag.
+//
+// The tag check looks only at the last path segment. A registry host may carry
+// a port — the in-house registry is `docker.prod.nuke.benjamin-borbe.de:443` —
+// so a colon anywhere in the reference is part of the host, not a tag, and
+// reading it as one would hand the build a tagless reference and the pre-flight
+// probe a repository instead of an image.
 func ImageReference(image, tag string) string {
-	if strings.Contains(image, ":") {
+	if strings.Contains(image[strings.LastIndex(image, "/")+1:], ":") {
 		return image
 	}
 	return image + ":" + tag

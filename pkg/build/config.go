@@ -11,13 +11,13 @@ import (
 	"github.com/bborbe/errors"
 )
 
-// BuildConfig is a repo's `dockerBuild` block from `.maintainer.yaml`, plus the
+// Config is a repo's `dockerBuild` block from `.maintainer.yaml`, plus the
 // defaults the watcher applies when the block is silent.
 //
 // Every field the canonical template needs beyond the release identity lives
 // here rather than in watcher code, so a repo can vary its build without a
 // watcher release.
-type BuildConfig struct {
+type Config struct {
 	// AutoBuild is the opt-in. Absent or false means this repo is not built.
 	AutoBuild bool
 	// Destinations names the registries the image is pushed to. The first is
@@ -46,11 +46,11 @@ var ErrBuildNotConfigured = stderrors.New("repo has no dockerBuild config")
 // ConfigProvider returns a repo's build configuration.
 //
 // The error return is load-bearing in the same way ImageChecker's is: a config
-// that cannot be read must surface as an error, never as a zero BuildConfig,
+// that cannot be read must surface as an error, never as a zero Config,
 // because a zero value reads as "not opted in" and would silently skip every
 // build for a repo that had opted in.
 type ConfigProvider interface {
-	Config(ctx context.Context, repo string) (BuildConfig, error)
+	Config(ctx context.Context, repo string) (Config, error)
 }
 
 //counterfeiter:generate -o ../../mocks/build_commit_epoch_provider.go --fake-name BuildCommitEpochProvider . CommitEpochProvider
@@ -101,9 +101,31 @@ var ErrBuildCapReached = stderrors.New("build concurrency cap reached")
 const DefaultMaxConcurrentBuilds = 3
 
 // Validate rejects a config that cannot produce a Job.
-func (c BuildConfig) Validate(ctx context.Context) error {
+func (c Config) Validate(ctx context.Context) error {
 	if len(c.Destinations) == 0 {
 		return errors.Wrapf(ctx, ErrBuildNotConfigured, "dockerBuild.destinations is empty")
 	}
+	// Every destination is checked, not only the one this arm builds to: a
+	// second entry naming a class the fleet cannot resolve is the same
+	// configuration fault, and validating it here surfaces the typo once
+	// instead of the day the second destination is wired.
+	for _, dest := range c.Destinations {
+		if !ValidateDestination(Destination(dest)) {
+			return errors.Wrapf(
+				ctx, ErrUnknownDestination,
+				"dockerBuild.destinations contains %q (known: dockerhub, ghcr, internal)",
+				dest,
+			)
+		}
+	}
 	return nil
+}
+
+// ImageRepositoryFor resolves this config's primary destination (the first
+// entry) to the image repository the build pushes to.
+func (c Config) ImageRepositoryFor(ctx context.Context, repo string) (string, error) {
+	if len(c.Destinations) == 0 {
+		return "", errors.Wrapf(ctx, ErrBuildNotConfigured, "dockerBuild.destinations is empty")
+	}
+	return ImageRepository(ctx, Destination(c.Destinations[0]), repo)
 }

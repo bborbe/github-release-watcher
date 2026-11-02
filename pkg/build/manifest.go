@@ -33,6 +33,10 @@ const DefaultBuildNamespace = "build"
 // one template, one dialect, two entry points. The names are deliberately the
 // reference renderer's, not this package's — a second spelling would mean the
 // repo's template could only ever serve one of the two callers.
+// "__PUSH_SECRET__", never a credential. The rule matches on the identifier
+// ("Token", "Secret") and cannot tell a placeholder from a secret.
+//
+//nolint:gosec // G101: every value here is a template placeholder name such as
 const (
 	// TokenJobName is the Job name, DNS-safe and unique per dispatch.
 	TokenJobName = "__JOB_NAME__"

@@ -66,18 +66,18 @@ type configProvider struct {
 	fetcher FileFetcher
 }
 
-func (p *configProvider) Config(ctx context.Context, repo string) (BuildConfig, error) {
+func (p *configProvider) Config(ctx context.Context, repo string) (Config, error) {
 	// The tag is not passed through: the opt-in is a repo property rather than a
 	// per-release one. Reading the default branch keeps a build's opt-in
 	// decision independent of which tag triggered it.
 	raw, err := p.fetcher.GetFileContent(ctx, repo, MaintainerConfigPath, "")
 	if err != nil {
-		return BuildConfig{}, errors.Wrapf(
+		return Config{}, errors.Wrapf(
 			ctx, err, "read %s repo=%s", MaintainerConfigPath, repo,
 		)
 	}
 	if len(raw) == 0 {
-		return BuildConfig{}, nil
+		return Config{}, nil
 	}
 	return ParseBuildConfig(ctx, raw, repo)
 }
@@ -85,15 +85,15 @@ func (p *configProvider) Config(ctx context.Context, repo string) (BuildConfig, 
 // ParseBuildConfig decodes the build configuration from raw `.maintainer.yaml`
 // bytes. Malformed YAML is an error, never a silent "not opted in": a typo in
 // the opt-in must be visible, not read as a deliberate no.
-func ParseBuildConfig(ctx context.Context, raw []byte, repo string) (BuildConfig, error) {
+func ParseBuildConfig(ctx context.Context, raw []byte, repo string) (Config, error) {
 	var cfg DockerBuildConfig
 	if err := yaml.Unmarshal(raw, &cfg); err != nil {
-		return BuildConfig{}, errors.Wrapf(
+		return Config{}, errors.Wrapf(
 			ctx, err, "parse %s dockerBuild", MaintainerConfigPath,
 		)
 	}
 	b := cfg.DockerBuild
-	return BuildConfig{
+	return Config{
 		AutoBuild:       b.AutoBuild,
 		Destinations:    b.Destinations,
 		PushSecret:      b.PushSecret,

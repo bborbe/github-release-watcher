@@ -32,6 +32,7 @@ func renderParams() build.RenderParams {
 	}
 }
 
+//nolint:gosec // G101: the values are template placeholders, never credentials.
 const tokenManifest = `apiVersion: batch/v1
 kind: Job
 metadata:

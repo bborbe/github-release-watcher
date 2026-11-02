@@ -45,7 +45,7 @@ var _ = Describe("ParseBuildConfig", func() {
 dockerBuild:
   autoBuild: true
   destinations:
-    - docker.io/bborbe/example
+    - dockerhub
   pushSecret: registry-secret
   deadlineSeconds: 900
   dockerfile: Containerfile
@@ -55,7 +55,7 @@ dockerBuild:
 `), "bborbe/example")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(cfg.AutoBuild).To(BeTrue())
-		Expect(cfg.Destinations).To(Equal([]string{"docker.io/bborbe/example"}))
+		Expect(cfg.Destinations).To(Equal([]string{"dockerhub"}))
 		Expect(cfg.PushSecret).To(Equal("registry-secret"))
 		Expect(cfg.DeadlineSeconds).To(Equal(900))
 		Expect(cfg.Dockerfile).To(Equal("Containerfile"))
