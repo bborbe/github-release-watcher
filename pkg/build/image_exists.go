@@ -64,7 +64,11 @@ func ParseImageRef(ctx context.Context, image string) (ImageRef, error) {
 	// A digest reference ("@sha256:…") names immutable content, never a tag we
 	// would build, so it is not a reference this checker can answer for.
 	if strings.Contains(image, "@") {
-		return ImageRef{}, errors.Errorf(ctx, "image reference %q carries a digest, not a tag", image)
+		return ImageRef{}, errors.Errorf(
+			ctx,
+			"image reference %q carries a digest, not a tag",
+			image,
+		)
 	}
 
 	host := "docker.io"
