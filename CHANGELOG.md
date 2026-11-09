@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+- chore: restate the do-not-merge contract in the gate workflow
+
 ## v0.12.2
 
 - fix: make the poll backstop actually reach GitHub. v0.12.1 switched the backstop to `Repositories.ListTags` but passed it `repo.Key()` and re-split that with `repoFromKey`, which cuts on the FIRST `/` — so the host-qualified `github.com/bborbe/go-skeleton` parsed as `Owner="github.com"`, `Name="bborbe/go-skeleton"` and every call asked for `/repos/github.com/bborbe/go-skeleton/tags`. GitHub answered 404, the 404 mapped to an empty tag list, and the backstop reported "nothing to do" on every cycle: the same silent dead path v0.12.1 was meant to remove, reintroduced by a lossy round-trip through a string. Measured on nuke dev at v0.12.1 — `github non-2xx … path=/repos/github.com/bborbe/go-skeleton/tags status=404` followed by `list tags …: repo not visible (404)`. `TagBackstop.Poll` now takes the `Repo` struct instead of a key, so the mistake is unrepresentable, and the dispatched `build.Request.Repo` carries the bare `owner/name` form that `repoFromKey`, the manifest loader and the file fetcher all expect. The unit specs could not have caught it: they called `Poll` with `"bborbe/example"`, the form the production caller never passes
