@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+- chore: update Go to 1.27.4 and github.com/bborbe/agent to v0.141.1, github.com/bborbe/cqrs to v0.6.16, github.com/bborbe/errors to v1.6.7, github.com/bborbe/http to v1.26.34, github.com/bborbe/k8s to v1.15.1, github.com/bborbe/kafka to v1.29.14, github.com/bborbe/kv to v1.21.30, github.com/bborbe/log to v1.7.9, github.com/bborbe/maintainer to v0.51.3, github.com/bborbe/parse to v1.12.7, github.com/bborbe/run to v1.11.12, github.com/bborbe/sentry to v1.10.8, github.com/bborbe/service to v1.11.4, github.com/bborbe/time to v1.27.28, github.com/onsi/ginkgo/v2 to v2.34.0, k8s.io/api to v0.38.0-beta.0, k8s.io/apimachinery to v0.38.0-beta.0, k8s.io/client-go to v0.38.0-beta.0
+
 ## v0.13.0
 
 - feat: `make build` resolves `BUILD_TARGET` from a bounded sun probe - sun when reachable, local docker as the fallback. An explicit `BUILD_TARGET` always wins, and the decision prints at parse time so it is visible under `make -n`
