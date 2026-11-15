@@ -1,6 +1,6 @@
 module github.com/bborbe/github-release-watcher
 
-go 1.27.3
+go 1.27.4
 
 replace (
 	k8s.io/kube-openapi v0.0.0-20260904170622-9ab3195f2a72 => k8s.io/kube-openapi v0.0.0-20260821135717-be32def86098
