@@ -20,13 +20,12 @@ jobs:
           go-version-file: go.mod
           cache-dependency-path: go.sum
       - name: Install Trivy
-        env:
-          TRIVY_VERSION: v0.76.2
-          TRIVY_SHA256: bc0fc726e017b8927a62b2d3531d7a84ee01769daf5c99ed866dced54089fdbf
+        # Installed from Trivy's own install script rather than the apt repo:
+        # `apt-key` is gone on the current ubuntu-latest image (26.04), and the
+        # apt repo publishes no suite for it, so both halves of the old recipe fail.
         run: |
-          curl -sfL "https://github.com/aquasecurity/trivy/releases/download/${TRIVY_VERSION}/trivy_${TRIVY_VERSION#v}_Linux-64bit.tar.gz" -o /tmp/trivy.tar.gz
-          echo "${TRIVY_SHA256}  /tmp/trivy.tar.gz" | sha256sum -c -
-          sudo tar -xzf /tmp/trivy.tar.gz -C /usr/local/bin trivy
+          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \
+            | sudo sh -s -- -b /usr/local/bin
       - name: Run precommit checks
         env:
           RACE: "false"
