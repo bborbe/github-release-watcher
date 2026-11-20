@@ -138,7 +138,10 @@ type GitHubClient interface {
 // transport is wrapped to observe X-RateLimit-Remaining on every response, so
 // RateLimitRemaining() reflects the shared App token's live quota.
 func NewGitHubClient(httpClient *http.Client) GitHubClient {
-	c := &githubClient{}
+	c := &githubClient{
+		content: map[contentKey]contentEntry{},
+		heads:   map[string]string{},
+	}
 	inner := httpClient.Transport
 	if inner == nil {
 		inner = http.DefaultTransport
@@ -156,6 +159,28 @@ type githubClient struct {
 	client        *gogithub.Client
 	mu            sync.Mutex
 	rateRemaining int
+
+	// content caches one file read per repo+path, keyed to the commit SHA it
+	// was read at. A file at a given commit is immutable, so an entry whose SHA
+	// still matches the branch head is served without a request. This is the
+	// only lever that removes calls rather than spreading them: the per-repo
+	// quartet is GetBranch + 2×GetContents + ListTags, and the two GetContents
+	// calls are the only ones that are safe to skip while the head is unchanged.
+	contentMu sync.Mutex
+	content   map[contentKey]contentEntry
+	heads     map[string]string // owner/name -> head SHA of the default branch
+}
+
+type contentKey struct {
+	owner, name, path string
+}
+
+// contentEntry is one cached file read. sha is the head SHA the read was taken
+// at; present distinguishes "file absent" (404) from "file has content".
+type contentEntry struct {
+	sha     string
+	present bool
+	decoded []byte
 }
 
 func (c *githubClient) setRateRemaining(n int) {
@@ -168,6 +193,42 @@ func (c *githubClient) RateLimitRemaining() int {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.rateRemaining
+}
+
+func repoKey(repo Repo) string { return repo.Owner + "/" + repo.Name }
+
+// setHead records the default branch's head SHA for repo. File reads taken at
+// that branch are cached against it, so a cycle that sees an unchanged head
+// spends no GetContents calls at all.
+func (c *githubClient) setHead(repo Repo, sha string) {
+	c.contentMu.Lock()
+	c.heads[repoKey(repo)] = sha
+	c.contentMu.Unlock()
+}
+
+func (c *githubClient) head(repo Repo) (string, bool) {
+	c.contentMu.Lock()
+	defer c.contentMu.Unlock()
+	sha, ok := c.heads[repoKey(repo)]
+	return sha, ok
+}
+
+// cachedContent returns the entry for key when it was read at sha. A different
+// sha is a miss: the file may have changed, so it must be re-read.
+func (c *githubClient) cachedContent(key contentKey, sha string) (contentEntry, bool) {
+	c.contentMu.Lock()
+	defer c.contentMu.Unlock()
+	entry, ok := c.content[key]
+	if !ok || entry.sha != sha {
+		return contentEntry{}, false
+	}
+	return entry, true
+}
+
+func (c *githubClient) storeContent(key contentKey, entry contentEntry) {
+	c.contentMu.Lock()
+	c.content[key] = entry
+	c.contentMu.Unlock()
 }
 
 // rateCapturingTransport wraps an http.RoundTripper and records the primary
@@ -207,6 +268,14 @@ func (t *rateCapturingTransport) captureRemaining(resp *http.Response) {
 			t.set(n)
 		}
 	}
+}
+
+// isNotFound reports whether err is a GitHub 404 response — the file is absent
+// at that ref (or the repo is unreadable to this token, which GitHub also
+// answers with 404).
+func isNotFound(err error) bool {
+	var ghErr *gogithub.ErrorResponse
+	return stderrors.As(err, &ghErr) && ghErr.Response.StatusCode == http.StatusNotFound
 }
 
 // isRateLimitError reports whether err is a GitHub API rate-limit signal
@@ -356,7 +425,9 @@ func (c *githubClient) GetMasterSHA(ctx context.Context, repo Repo) (string, err
 			repo.DefaultBranch,
 		)
 	}
-	return branch.GetCommit().GetSHA(), nil
+	sha := branch.GetCommit().GetSHA()
+	c.setHead(repo, sha)
+	return sha, nil
 }
 
 func (c *githubClient) GetLatestReleaseTag(ctx context.Context, repo Repo) (string, error) {
@@ -445,6 +516,14 @@ func (c *githubClient) fileContent(
 	path, ref string,
 ) ([]byte, error) {
 	opts := &gogithub.RepositoryContentGetOptions{Ref: ref}
+	// Serve from cache when the default branch head has not moved since the last
+	// read. Content at a commit SHA is immutable, so the answer cannot have
+	// changed — and skipping the call is the only thing that reduces the burn
+	// rather than spreading it over a longer interval.
+	cacheKey, cacheSHA, cacheable := c.contentCacheKey(repo, path, ref)
+	if content, hit := c.cachedFile(cacheKey, cacheSHA, cacheable); hit {
+		return content, nil
+	}
 	fileContent, _, _, err := c.client.Repositories.GetContents(
 		ctx,
 		repo.Owner,
@@ -453,8 +532,8 @@ func (c *githubClient) fileContent(
 		opts,
 	)
 	if err != nil {
-		var ghErr *gogithub.ErrorResponse
-		if stderrors.As(err, &ghErr) && ghErr.Response.StatusCode == http.StatusNotFound {
+		if isNotFound(err) {
+			c.storeFile(cacheKey, cacheable, contentEntry{sha: cacheSHA})
 			return nil, nil
 		}
 		if isRateLimitError(err) {
@@ -498,7 +577,50 @@ func (c *githubClient) fileContent(
 			len(decoded),
 		)
 	}
+	c.storeFile(
+		cacheKey,
+		cacheable,
+		contentEntry{sha: cacheSHA, present: true, decoded: []byte(decoded)},
+	)
 	return []byte(decoded), nil
+}
+
+// cachedFile returns a cached file read when one exists for key at sha. hit
+// reports whether the cache answered; an absent file is a hit with nil content.
+func (c *githubClient) cachedFile(key contentKey, sha string, cacheable bool) ([]byte, bool) {
+	if !cacheable {
+		return nil, false
+	}
+	entry, ok := c.cachedContent(key, sha)
+	if !ok {
+		return nil, false
+	}
+	if !entry.present {
+		return nil, true
+	}
+	return entry.decoded, true
+}
+
+func (c *githubClient) storeFile(key contentKey, cacheable bool, entry contentEntry) {
+	if !cacheable {
+		return
+	}
+	c.storeContent(key, entry)
+}
+
+// contentCacheKey reports whether a read of path at ref may be cached, and the
+// key and head SHA it would be cached under. Only reads at the default branch
+// are cacheable, and only once the branch head is known — a tag or explicit SHA
+// ref has no head to invalidate against, so it always goes to the API.
+func (c *githubClient) contentCacheKey(repo Repo, path, ref string) (contentKey, string, bool) {
+	if repo.DefaultBranch == "" || ref != repo.DefaultBranch {
+		return contentKey{}, "", false
+	}
+	sha, ok := c.head(repo)
+	if !ok || sha == "" {
+		return contentKey{}, "", false
+	}
+	return contentKey{owner: repo.Owner, name: repo.Name, path: path}, sha, true
 }
 
 func (c *githubClient) GetFileContent(
