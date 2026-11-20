@@ -728,4 +728,93 @@ var _ = Describe("pkg.GitHubClient", func() {
 			})
 		})
 	})
+
+	Describe("content cache", func() {
+		It("skips the file read while the branch head is unchanged", func() {
+			contentsCalls := 0
+			sha := "sha-one"
+			server := httptest.NewServer(
+				http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					w.Header().Set("Content-Type", "application/json")
+					switch r.URL.Path {
+					case "/repos/bborbe/cached/branches/main":
+						fmt.Fprintf(w, `{"name":"main","commit":{"sha":%q}}`, sha)
+					case "/repos/bborbe/cached/contents/CHANGELOG.md":
+						contentsCalls++
+						fmt.Fprintf(
+							w,
+							`{"name":"CHANGELOG.md","path":"CHANGELOG.md","size":3,"encoding":"base64","content":%q}`,
+							base64.StdEncoding.EncodeToString([]byte("abc")),
+						)
+					default:
+						w.WriteHeader(http.StatusNotFound)
+						fmt.Fprintf(w, `{"message":"Not Found"}`)
+					}
+				}),
+			)
+			defer server.Close()
+
+			client := pkg.NewGitHubClient(server.Client())
+			Expect(pkg.SetBaseURL(client, server.URL+"/")).NotTo(HaveOccurred())
+			repo := pkg.Repo{Owner: "bborbe", Name: "cached", DefaultBranch: "main"}
+
+			_, err := client.GetMasterSHA(ctx, repo)
+			Expect(err).NotTo(HaveOccurred())
+
+			first, err := client.GetChangelogContent(ctx, repo)
+			Expect(err).NotTo(HaveOccurred())
+			second, err := client.GetChangelogContent(ctx, repo)
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(string(first)).To(Equal("abc"))
+			Expect(string(second)).To(Equal("abc"))
+			Expect(contentsCalls).To(Equal(1))
+		})
+
+		It("re-reads after the branch head moves", func() {
+			contentsCalls := 0
+			sha := "sha-one"
+			server := httptest.NewServer(
+				http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					w.Header().Set("Content-Type", "application/json")
+					switch r.URL.Path {
+					case "/repos/bborbe/moved/branches/main":
+						fmt.Fprintf(w, `{"name":"main","commit":{"sha":%q}}`, sha)
+					case "/repos/bborbe/moved/contents/CHANGELOG.md":
+						contentsCalls++
+						fmt.Fprintf(
+							w,
+							`{"name":"CHANGELOG.md","path":"CHANGELOG.md","size":3,"encoding":"base64","content":%q}`,
+							base64.StdEncoding.EncodeToString(
+								[]byte(fmt.Sprintf("v%d", contentsCalls)),
+							),
+						)
+					default:
+						w.WriteHeader(http.StatusNotFound)
+						fmt.Fprintf(w, `{"message":"Not Found"}`)
+					}
+				}),
+			)
+			defer server.Close()
+
+			client := pkg.NewGitHubClient(server.Client())
+			Expect(pkg.SetBaseURL(client, server.URL+"/")).NotTo(HaveOccurred())
+			repo := pkg.Repo{Owner: "bborbe", Name: "moved", DefaultBranch: "main"}
+
+			_, err := client.GetMasterSHA(ctx, repo)
+			Expect(err).NotTo(HaveOccurred())
+			first, err := client.GetChangelogContent(ctx, repo)
+			Expect(err).NotTo(HaveOccurred())
+
+			sha = "sha-two"
+			_, err = client.GetMasterSHA(ctx, repo)
+			Expect(err).NotTo(HaveOccurred())
+			second, err := client.GetChangelogContent(ctx, repo)
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(string(first)).To(Equal("v1"))
+			Expect(string(second)).To(Equal("v2"))
+			Expect(contentsCalls).To(Equal(2))
+		})
+	})
 })
