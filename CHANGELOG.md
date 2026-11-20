@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## v0.14.1
 
+- fix(build): run the sun build job on `golang:1.27.4` — `go.mod` requires 1.27.4, so the pinned `golang:1.27.3` builder fails with `go.mod requires go >= 1.27.4 (running go 1.27.3; GOTOOLCHAIN=local)` and no release image can be built
 - fix: serve `CHANGELOG.md` and `.maintainer.yaml` from a head-SHA-keyed content cache, so a cycle that sees an unchanged branch spends no `GetContents` calls — two of the four per-repo calls, including the ones that always 404
 
 ## v0.14.0
