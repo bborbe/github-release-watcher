@@ -65,7 +65,7 @@ var _ = Describe("pkg.GitHubClient", func() {
 					defer server.Close()
 					serverURL = server.URL
 
-					client := pkg.NewGitHubClient(server.Client())
+					client := pkg.NewGitHubClient(server.Client(), "")
 					err := pkg.SetBaseURL(client, server.URL+"/")
 					Expect(err).NotTo(HaveOccurred())
 
@@ -104,7 +104,7 @@ var _ = Describe("pkg.GitHubClient", func() {
 					)
 					defer server.Close()
 
-					client := pkg.NewGitHubClient(server.Client())
+					client := pkg.NewGitHubClient(server.Client(), "")
 					err := pkg.SetBaseURL(client, server.URL+"/")
 					Expect(err).NotTo(HaveOccurred())
 
@@ -131,7 +131,7 @@ var _ = Describe("pkg.GitHubClient", func() {
 				)
 				defer server.Close()
 
-				client := pkg.NewGitHubClient(server.Client())
+				client := pkg.NewGitHubClient(server.Client(), "")
 				err := pkg.SetBaseURL(client, server.URL+"/")
 				Expect(err).NotTo(HaveOccurred())
 
@@ -158,7 +158,7 @@ var _ = Describe("pkg.GitHubClient", func() {
 				)
 				defer server.Close()
 
-				client := pkg.NewGitHubClient(server.Client())
+				client := pkg.NewGitHubClient(server.Client(), "")
 				err := pkg.SetBaseURL(client, server.URL+"/")
 				Expect(err).NotTo(HaveOccurred())
 
@@ -183,7 +183,7 @@ var _ = Describe("pkg.GitHubClient", func() {
 				)
 				defer server.Close()
 
-				client := pkg.NewGitHubClient(server.Client())
+				client := pkg.NewGitHubClient(server.Client(), "")
 				err := pkg.SetBaseURL(client, server.URL+"/")
 				Expect(err).NotTo(HaveOccurred())
 
@@ -215,7 +215,7 @@ var _ = Describe("pkg.GitHubClient", func() {
 				)
 				defer server.Close()
 
-				client := pkg.NewGitHubClient(server.Client())
+				client := pkg.NewGitHubClient(server.Client(), "")
 				err := pkg.SetBaseURL(client, server.URL+"/")
 				Expect(err).NotTo(HaveOccurred())
 
@@ -247,7 +247,7 @@ var _ = Describe("pkg.GitHubClient", func() {
 				)
 				defer server.Close()
 
-				client := pkg.NewGitHubClient(server.Client())
+				client := pkg.NewGitHubClient(server.Client(), "")
 				err := pkg.SetBaseURL(client, server.URL+"/")
 				Expect(err).NotTo(HaveOccurred())
 
@@ -269,7 +269,7 @@ var _ = Describe("pkg.GitHubClient", func() {
 				)
 				defer server.Close()
 
-				client := pkg.NewGitHubClient(server.Client())
+				client := pkg.NewGitHubClient(server.Client(), "")
 				err := pkg.SetBaseURL(client, server.URL+"/")
 				Expect(err).NotTo(HaveOccurred())
 
@@ -295,7 +295,7 @@ var _ = Describe("pkg.GitHubClient", func() {
 				)
 				defer server.Close()
 
-				client := pkg.NewGitHubClient(server.Client())
+				client := pkg.NewGitHubClient(server.Client(), "")
 				err := pkg.SetBaseURL(client, server.URL+"/")
 				Expect(err).NotTo(HaveOccurred())
 
@@ -317,7 +317,7 @@ var _ = Describe("pkg.GitHubClient", func() {
 				)
 				defer server.Close()
 
-				client := pkg.NewGitHubClient(server.Client())
+				client := pkg.NewGitHubClient(server.Client(), "")
 				err := pkg.SetBaseURL(client, server.URL+"/")
 				Expect(err).NotTo(HaveOccurred())
 
@@ -341,7 +341,7 @@ var _ = Describe("pkg.GitHubClient", func() {
 				)
 				defer server.Close()
 
-				client := pkg.NewGitHubClient(server.Client())
+				client := pkg.NewGitHubClient(server.Client(), "")
 				err := pkg.SetBaseURL(client, server.URL+"/")
 				Expect(err).NotTo(HaveOccurred())
 
@@ -373,7 +373,7 @@ var _ = Describe("pkg.GitHubClient", func() {
 				)
 				defer server.Close()
 
-				client := pkg.NewGitHubClient(server.Client())
+				client := pkg.NewGitHubClient(server.Client(), "")
 				err := pkg.SetBaseURL(client, server.URL+"/")
 				Expect(err).NotTo(HaveOccurred())
 
@@ -401,7 +401,7 @@ var _ = Describe("pkg.GitHubClient", func() {
 				)
 				defer server.Close()
 
-				client := pkg.NewGitHubClient(server.Client())
+				client := pkg.NewGitHubClient(server.Client(), "")
 				err := pkg.SetBaseURL(client, server.URL+"/")
 				Expect(err).NotTo(HaveOccurred())
 
@@ -428,7 +428,7 @@ var _ = Describe("pkg.GitHubClient", func() {
 				)
 				defer server.Close()
 
-				client := pkg.NewGitHubClient(server.Client())
+				client := pkg.NewGitHubClient(server.Client(), "")
 				err := pkg.SetBaseURL(client, server.URL+"/")
 				Expect(err).NotTo(HaveOccurred())
 
@@ -455,7 +455,7 @@ var _ = Describe("pkg.GitHubClient", func() {
 				)
 				defer server.Close()
 
-				client := pkg.NewGitHubClient(server.Client())
+				client := pkg.NewGitHubClient(server.Client(), "")
 				err := pkg.SetBaseURL(client, server.URL+"/")
 				Expect(err).NotTo(HaveOccurred())
 
@@ -481,7 +481,7 @@ var _ = Describe("pkg.GitHubClient", func() {
 				)
 				defer server.Close()
 
-				client := pkg.NewGitHubClient(server.Client())
+				client := pkg.NewGitHubClient(server.Client(), "")
 				err := pkg.SetBaseURL(client, server.URL+"/")
 				Expect(err).NotTo(HaveOccurred())
 
@@ -512,7 +512,7 @@ var _ = Describe("pkg.GitHubClient", func() {
 				)
 				defer server.Close()
 
-				client := pkg.NewGitHubClient(server.Client())
+				client := pkg.NewGitHubClient(server.Client(), "")
 				err := pkg.SetBaseURL(client, server.URL+"/")
 				Expect(err).NotTo(HaveOccurred())
 
@@ -543,7 +543,7 @@ var _ = Describe("pkg.GitHubClient", func() {
 				)
 				defer server.Close()
 
-				client := pkg.NewGitHubClient(server.Client())
+				client := pkg.NewGitHubClient(server.Client(), "")
 				err := pkg.SetBaseURL(client, server.URL+"/")
 				Expect(err).NotTo(HaveOccurred())
 
@@ -574,7 +574,7 @@ var _ = Describe("pkg.GitHubClient", func() {
 				)
 				defer server.Close()
 
-				client := pkg.NewGitHubClient(server.Client())
+				client := pkg.NewGitHubClient(server.Client(), "")
 				err := pkg.SetBaseURL(client, server.URL+"/")
 				Expect(err).NotTo(HaveOccurred())
 
@@ -605,7 +605,7 @@ var _ = Describe("pkg.GitHubClient", func() {
 				)
 				defer server.Close()
 
-				client := pkg.NewGitHubClient(server.Client())
+				client := pkg.NewGitHubClient(server.Client(), "")
 				err := pkg.SetBaseURL(client, server.URL+"/")
 				Expect(err).NotTo(HaveOccurred())
 
@@ -637,7 +637,7 @@ var _ = Describe("pkg.GitHubClient", func() {
 				)
 				defer server.Close()
 
-				client := pkg.NewGitHubClient(server.Client())
+				client := pkg.NewGitHubClient(server.Client(), "")
 				err := pkg.SetBaseURL(client, server.URL+"/")
 				Expect(err).NotTo(HaveOccurred())
 
@@ -663,7 +663,7 @@ var _ = Describe("pkg.GitHubClient", func() {
 				)
 				defer server.Close()
 
-				client := pkg.NewGitHubClient(server.Client())
+				client := pkg.NewGitHubClient(server.Client(), "")
 				err := pkg.SetBaseURL(client, server.URL+"/")
 				Expect(err).NotTo(HaveOccurred())
 
@@ -687,7 +687,7 @@ var _ = Describe("pkg.GitHubClient", func() {
 				)
 				defer server.Close()
 
-				client := pkg.NewGitHubClient(server.Client())
+				client := pkg.NewGitHubClient(server.Client(), "")
 				err := pkg.SetBaseURL(client, server.URL+"/")
 				Expect(err).NotTo(HaveOccurred())
 
@@ -714,7 +714,7 @@ var _ = Describe("pkg.GitHubClient", func() {
 				)
 				defer server.Close()
 
-				client := pkg.NewGitHubClient(server.Client())
+				client := pkg.NewGitHubClient(server.Client(), "")
 				err := pkg.SetBaseURL(client, server.URL+"/")
 				Expect(err).NotTo(HaveOccurred())
 
@@ -754,7 +754,7 @@ var _ = Describe("pkg.GitHubClient", func() {
 			)
 			defer server.Close()
 
-			client := pkg.NewGitHubClient(server.Client())
+			client := pkg.NewGitHubClient(server.Client(), "")
 			Expect(pkg.SetBaseURL(client, server.URL+"/")).NotTo(HaveOccurred())
 			repo := pkg.Repo{Owner: "bborbe", Name: "cached", DefaultBranch: "main"}
 
@@ -797,7 +797,7 @@ var _ = Describe("pkg.GitHubClient", func() {
 			)
 			defer server.Close()
 
-			client := pkg.NewGitHubClient(server.Client())
+			client := pkg.NewGitHubClient(server.Client(), "")
 			Expect(pkg.SetBaseURL(client, server.URL+"/")).NotTo(HaveOccurred())
 			repo := pkg.Repo{Owner: "bborbe", Name: "moved", DefaultBranch: "main"}
 

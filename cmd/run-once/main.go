@@ -54,6 +54,7 @@ type Application struct {
 	AppID          int64            `required:"false" arg:"app-id"              env:"APP_ID"              usage:"GitHub App ID (preferred auth path)"`
 	InstallationID int64            `required:"false" arg:"installation-id"     env:"INSTALLATION_ID"     usage:"GitHub App Installation ID"`
 	PEMKey         string           `required:"false" arg:"pem-key"             env:"PEM_KEY"             usage:"GitHub App PEM key (populated from k8s Secret)"                                                                                                                                                                     display:"length"`
+	APIBaseURL     string           `required:"false" arg:"api-base-url"        env:"GITHUB_API_BASE_URL" usage:"GitHub API base URL override (empty = https://api.github.com); used to point the watcher at a stub"`
 	// TopicPrefix selects the Kafka topic prefix used for CQRS topic construction
 	// (e.g. "develop" / "master"); independent of Stage. Empty means unprefixed topics.
 	TopicPrefix       base.TopicPrefix `required:"false" arg:"topic-prefix"        env:"TOPIC_PREFIX"        usage:"Kafka topic prefix for CQRS topic construction"`
@@ -100,6 +101,7 @@ func (a *Application) Run(ctx context.Context, _ libsentry.Client) error {
 		AppID:          a.AppID,
 		InstallationID: a.InstallationID,
 		PEMKey:         []byte(a.PEMKey),
+		BaseURL:        a.APIBaseURL,
 	})
 	if err != nil {
 		return errors.Wrap(ctx, err, "resolve auth")
@@ -123,7 +125,7 @@ func (a *Application) Run(ctx context.Context, _ libsentry.Client) error {
 	staticFilters := factory.CreateStaticFilters(allowlist)
 
 	w := a.CreateWatcher(
-		pkg.NewGitHubClient(httpClient),
+		pkg.NewGitHubClient(httpClient, a.APIBaseURL),
 		sender,
 		a.CursorPath,
 		a.Owner,
