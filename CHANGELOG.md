@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+- chore: remove 23 stale vulnerability ignore IDs
+- ci: install Trivy from a pinned, checksum-verified release tarball so the test job stops failing on the removed `apt-key` helper
+
 ## v0.14.1
 
 - fix(build): run the sun build job on `golang:1.27.4` — `go.mod` requires 1.27.4, so the pinned `golang:1.27.3` builder fails with `go.mod requires go >= 1.27.4 (running go 1.27.3; GOTOOLCHAIN=local)` and no release image can be built
