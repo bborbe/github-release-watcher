@@ -27,6 +27,7 @@ type Credentials struct {
 	AppID          int64
 	InstallationID int64
 	PEMKey         []byte
+	BaseURL        string // GitHub API base URL override; empty means https://api.github.com
 }
 
 // ResolveGitHubClient uses GitHub App auth and returns the authenticated *http.Client.
@@ -67,6 +68,7 @@ func ResolveGitHubClient(ctx context.Context, creds Credentials) (*http.Client, 
 			AppID:          creds.AppID,
 			InstallationID: creds.InstallationID,
 			PEM:            creds.PEMKey,
+			BaseURL:        creds.BaseURL,
 		})
 		if err != nil {
 			return nil, errors.Wrap(ctx, err, "create github app client")
